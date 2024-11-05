@@ -155,30 +155,49 @@ export class TranscriptView extends ItemView {
 			const timestampText = block.querySelector(".timestamp")?.textContent?.toLowerCase() || "";
 			const allText = `${originalText} ${translatedText} ${timestampText}`;
 
-			if (searchValue === "" || allText.includes(searchLower)) {
+			if (searchValue === "") {
+				// 如果搜索框为空，显示所有内容
 				(block as HTMLElement).style.display = "block";
-				if (searchValue) {
-					// 分别高亮原文和翻译中的匹配内容
-					const originalEl = block.querySelector(".original-text");
-					const translatedEl = block.querySelector(".translated-text");
-					
-					if (originalEl) {
-						this.highlightText(originalEl as HTMLElement, searchValue);
-					}
-					if (translatedEl) {
-						this.highlightText(translatedEl as HTMLElement, searchValue);
-					}
+				// 移除之前的高亮
+				const originalEl = block.querySelector(".original-text");
+				const translatedEl = block.querySelector(".translated-text");
+				if (originalEl) {
+					this.removeHighlights(originalEl as HTMLElement);
+				}
+				if (translatedEl) {
+					this.removeHighlights(translatedEl as HTMLElement);
+				}
+			} else if (allText.includes(searchLower)) {
+				// 如果找到匹配内容，显示并高亮
+				(block as HTMLElement).style.display = "block";
+				const originalEl = block.querySelector(".original-text");
+				const translatedEl = block.querySelector(".translated-text");
+				
+				if (originalEl) {
+					this.highlightText(originalEl as HTMLElement, searchValue);
+				}
+				if (translatedEl) {
+					this.highlightText(translatedEl as HTMLElement, searchValue);
 				}
 				hasResults = true;
 			} else {
-				(block as HTMLElement).style.display = "none";
+				// 如果没有匹配内容，保持显示但不高亮
+				(block as HTMLElement).style.display = "block";
+				const originalEl = block.querySelector(".original-text");
+				const translatedEl = block.querySelector(".translated-text");
+				if (originalEl) {
+					this.removeHighlights(originalEl as HTMLElement);
+				}
+				if (translatedEl) {
+					this.removeHighlights(translatedEl as HTMLElement);
+				}
 			}
 		});
 
 		// 更新搜索状态显示
 		const existingStatus = this.contentEl.querySelector(".search-status");
 		if (existingStatus) {
-				existingStatus.remove();
+			existingStatus.remove();
 		}
 
 		if (searchValue) {
@@ -488,7 +507,7 @@ export class TranscriptView extends ItemView {
 			const text = item.text.trim();
 			const timestamp = item.timestamp || 0;
 
-			// ��果是第一目��初始化开始时间
+			// 果是第一目初始化开始时间
 			if (currentParagraph.texts.length === 0) {
 				currentParagraph.startTime = timestamp;
 			}
@@ -1090,7 +1109,7 @@ export class TranscriptView extends ItemView {
 						translatedDiv = contentDiv.createEl('div', { cls: 'translated-text' });
 					}
 
-					// 使用流式输出
+					// 使用��式输出
 					await apiService.translate(
 						originalText,
 						this.plugin.settings.targetLang,
