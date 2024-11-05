@@ -142,19 +142,129 @@ export class TranscriptFetcher {
 	}
 
 	private static cleanText(text: string): string {
-		return text
-			.replace(/\s+/g, ' ')
+		// 检测是否主要是英文文本
+		const englishMatches = text.match(/[a-zA-Z]/g);
+		const chineseMatches = text.match(/[\u4e00-\u9fa5]/g);
+		
+		const isEnglish = (englishMatches?.length || 0) > (chineseMatches?.length || 0);
+		
+		if (isEnglish) {
+			return this.cleanEnglishText(text);
+		} else {
+			return this.cleanChineseText(text);
+		}
+	}
+
+	private static cleanEnglishText(text: string): string {
+		// 1. 基础清理
+		let result = text
+			.replace(/\s+/g, ' ')  // 合并多个空格
+			.replace(/[【】\[\]]/g, '')  // 移除方括号
+			.replace(/\(.*?\)/g, '') // 移除圆括号内容
+			.replace(/\{.*?\}/g, '') // 移除花括号内容
+			.trim();
+
+		// 2. 分句并重组
+		const sentences = result.split(/([.!?]+)/).filter(Boolean);
+		const cleanedSentences = [];
+		
+		for (let i = 0; i < sentences.length; i += 2) {
+			let sentence = sentences[i];
+			const punctuation = sentences[i + 1] || '.';
+			
+			// 处理每个句子
+			sentence = sentence
+				.trim()
+				// 修复撇号
+				.replace(/([a-zA-Z])'([a-zA-Z])/g, "$1'$2")
+				// 确保句子首字母大写
+				.replace(/^[a-z]/, c => c.toUpperCase());
+				
+			// 如果句子太长，尝试在连接词处分割
+			if (sentence.length > 50) {
+				const parts = sentence.split(/\b(and|but|or|because|so|then)\b/i);
+				if (parts.length > 1) {
+					for (let j = 0; j < parts.length; j += 2) {
+						const part = parts[j].trim();
+						const conjunction = parts[j + 1] || '';
+						if (part) {
+							cleanedSentences.push(
+								part.replace(/^[a-z]/, c => c.toUpperCase()) + 
+								(conjunction ? `, ${conjunction}` : '')
+							);
+						}
+					}
+					continue;
+				}
+			}
+			
+			cleanedSentences.push(sentence + punctuation + ' ');
+		}
+		
+		return cleanedSentences.join('').trim();
+	}
+
+	private static cleanChineseText(text: string): string {
+		// 1. 基础清理
+		const cleanText = text
+			.replace(/\s+/g, '')  // 移除所有空格
 			.replace(/[【】\[\]]/g, '')
 			.replace(/\(.*?\)/g, '')
 			.replace(/\{.*?\}/g, '')
-			.replace(/[,.!?。，！？]+(\s|$)/g, match => match.trim() + ' ')
-			.replace(/^\s+|\s+$/g, '')
-			.replace(/^[-–—]+\s*/, '');
+			.trim();
+		
+		// 2. 分段处理
+		const segments = [];
+		let currentSegment = '';
+		let currentLength = 0;
+		
+		for (let i = 0; i < cleanText.length; i++) {
+			const char = cleanText[i];
+			currentSegment += char;
+			currentLength++;
+			
+			// 在以下情况分段：
+			// 1. 遇到句号、问号、感叹号
+			// 2. 遇到转折词
+			// 3. 达到最大长度
+			// 4. 遇到某些特定词语
+			if (
+				/[。！？]/.test(char) ||
+				currentLength >= 30 ||
+				/^(但是|所以|因此|然后|接着|不过|而且|并且)/.test(cleanText.slice(i + 1)) ||
+				/(吗|呢|啊|哦|呀|哈|吧)$/.test(currentSegment)
+			) {
+				// 确保段落结尾有标点
+				if (!/[。！？，]$/.test(currentSegment)) {
+					currentSegment += '。';
+				}
+				segments.push(currentSegment);
+				currentSegment = '';
+				currentLength = 0;
+			}
+			// 在逗号处适当分段
+			else if (char === '，' && currentLength > 15) {
+				segments.push(currentSegment);
+				currentSegment = '';
+				currentLength = 0;
+			}
+		}
+		
+		// 处理最后一段
+		if (currentSegment) {
+			if (!/[。！？，]$/.test(currentSegment)) {
+				currentSegment += '。';
+			}
+			segments.push(currentSegment);
+		}
+		
+		return segments.join('\n');
 	}
 
 	private static mergeShortSubtitles(lines: TranscriptLine[]): TranscriptLine[] {
 		const MIN_DURATION = 1000;
 		const MAX_GAP = 500;
+		const MAX_MERGE_LENGTH = 100; // 添加最大合并长度限制
 		
 		return lines.reduce((acc: TranscriptLine[], current: TranscriptLine, index: number) => {
 			if (acc.length === 0) {
@@ -163,8 +273,11 @@ export class TranscriptFetcher {
 
 			const last = acc[acc.length - 1];
 			const gap = current.offset - (last.offset + last.duration);
+			const mergedTextLength = (last.text + current.text).length;
 
-			if (current.duration < MIN_DURATION || gap < MAX_GAP) {
+			// 判断是否应该合并
+			if ((current.duration < MIN_DURATION || gap < MAX_GAP) && 
+				mergedTextLength <= MAX_MERGE_LENGTH) {
 				last.text += ' ' + current.text;
 				last.duration = current.offset + current.duration - last.offset;
 				return acc;

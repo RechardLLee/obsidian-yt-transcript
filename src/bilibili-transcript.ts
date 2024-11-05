@@ -194,9 +194,9 @@ export class BilibiliTranscript {
 
     // 添加合并短字幕的方法
     private static mergeShortSubtitles(lines: BilibiliTranscriptLine[]): BilibiliTranscriptLine[] {
-        const MIN_DURATION = 1000; // 最小持续时间（毫秒）
-        const MAX_GAP = 300;      // 最大间隔时间（毫秒）
-        const MAX_MERGE_LENGTH = 100; // 最大合并后的文本长度
+        const MIN_DURATION = 1000;
+        const MAX_GAP = 300;
+        const MAX_MERGE_LENGTH = 50; // 减小最大合并长度限制
         
         return lines.reduce((acc: BilibiliTranscriptLine[], current: BilibiliTranscriptLine, index: number) => {
             if (acc.length === 0) {
@@ -214,7 +214,7 @@ export class BilibiliTranscript {
                 !this.isCompleteSentence(last.text);
 
             if (shouldMerge) {
-                last.text = `${last.text} ${current.text}`.trim();
+                last.text = `${last.text}${current.text}`;
                 last.duration = current.offset + current.duration - last.offset;
                 return acc;
             }
@@ -225,11 +225,18 @@ export class BilibiliTranscript {
 
     // 判断是否是完整句子
     private static isCompleteSentence(text: string): boolean {
-        const endPunctuation = /[.!?。！？…]/;
-        const newTopicStarters = /^(但是|然后|接着|所以|因此|不过|而且|并且|另外|总之)/;
+        // 检查是否以句号、问号、感叹号结尾
+        if (/[。！？]$/.test(text)) {
+            return true;
+        }
         
-        return endPunctuation.test(text.trim()) || 
-               newTopicStarters.test(text.trim());
+        // 检查是否包含完整的语义单位
+        const semanticUnits = [
+            '但是', '所以', '因此', '然后', '接着', '不过', 
+            '而且', '并且', '另外', '总之', '其实', '事实上'
+        ];
+        
+        return semanticUnits.some(unit => text.includes(unit));
     }
 
     private static extractBvid(url: string): string | null {
@@ -348,16 +355,169 @@ export class BilibiliTranscript {
     }
 
     private static cleanText(text: string): string {
-        return text
+        // 检测是否主要是英文文本
+        const englishMatches = text.match(/[a-zA-Z]/g);
+        const chineseMatches = text.match(/[\u4e00-\u9fa5]/g);
+        
+        // 使用可选链和空值合并运算符来安全处理可能为null的匹配结果
+        const isEnglish = (englishMatches?.length || 0) > (chineseMatches?.length || 0);
+        
+        if (isEnglish) {
+            // 处理英文文本
+            return this.cleanEnglishText(text);
+        } else {
+            // 处理中文文本
+            return this.cleanChineseText(text);
+        }
+    }
+
+    private static cleanEnglishText(text: string): string {
+        // 1. 修复常见的标点问题
+        let result = text
             .replace(/\s+/g, ' ')  // 合并多个空格
-            .replace(/[【】\[\]]/g, '')  // 移除方括号
-            .replace(/\(.*?\)/g, '') // 移除圆括号内容
-            .replace(/\{.*?\}/g, '') // 移除花括号内容
-            .replace(/[,.!?。，！？]+(\s|$)/g, match => match.trim() + ' ') // 标点符号后添加空格
-            .replace(/^\s+|\s+$/g, '') // 移除首尾空格
-            .replace(/^[-–—]+\s*/, '') // 移除开头的破折号
-            .replace(/[\u200B-\u200D\uFEFF]/g, '') // 移除零宽字符
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // 移除控制字符
-            .replace(/\uFFFD/g, ''); // 移除替换字符
+            .replace(/([.!?])\s*([a-zA-Z])/g, '$1 $2')  // 确保句号后有空格
+            .replace(/\s+([,.!?])/g, '$1')  // 移除标点前的空格
+            .replace(/([a-zA-Z])'([a-zA-Z])/g, "$1'$2")  // 修复撇号
+            .trim();
+        
+        // 2. 添加缺失的句号
+        if (!/[.!?]$/.test(result)) {
+            result += '.';
+        }
+        
+        // 3. 确保句子首字母大写
+        result = result.replace(/([.!?]\s+)([a-z])/g, (match, p1, p2) => 
+            p1 + p2.toUpperCase()
+        );
+        
+        return result;
+    }
+
+    private static cleanChineseText(text: string): string {
+        // 1. 基础清理
+        let cleanText = text
+            .replace(/\s+/g, '')  // 移除所有空格
+            .replace(/[【】\[\]]/g, '')
+            .replace(/\(.*?\)/g, '')
+            .replace(/\{.*?\}/g, '')
+            .trim();
+        
+        // 2. 先按明显的句子结束符分段
+        let segments = cleanText.split(/([。！？]+)/).map((part, index, array) => {
+            // 如果是标点符号，附加到前一段
+            if (index % 2 === 1) {
+                return '';
+            }
+            // 如果下一个是标点，加上标点
+            if (array[index + 1]) {
+                return part + array[index + 1];
+            }
+            // 最后一段如果没有标点，加上句号
+            return part + (part ? '。' : '');
+        }).filter(Boolean);
+
+        // 3. 处理过长的段落
+        segments = segments.reduce((acc: string[], segment) => {
+            if (segment.length <= 50) {
+                acc.push(segment);
+                return acc;
+            }
+
+            // 按逗号分割长句
+            const parts = segment.split(/([，,])/);
+            let currentPart = '';
+
+            for (let i = 0; i < parts.length; i += 2) {
+                const text = parts[i];
+                const comma = parts[i + 1] || '';
+                
+                if ((currentPart + text).length > 40) {
+                    if (currentPart) {
+                        acc.push(currentPart + '。');
+                    }
+                    currentPart = text + comma;
+                } else {
+                    currentPart += text + comma;
+                }
+            }
+
+            if (currentPart) {
+                acc.push(currentPart);
+            }
+
+            return acc;
+        }, []);
+
+        // 4. 进一步处理分段
+        segments = segments.map(segment => {
+            // 在转折词前添加分段
+            const transitionWords = ['但是', '然而', '不过', '可是', '因此', '所以', '于是', '然后'];
+            for (const word of transitionWords) {
+                if (segment.includes(word)) {
+                    segment = segment.replace(word, `。${word}`);
+                }
+            }
+            return segment;
+        });
+
+        // 5. 确保每段都有合适的标点结尾
+        segments = segments.map(segment => {
+            segment = segment.trim();
+            if (!segment.match(/[。！？]$/)) {
+                segment += '。';
+            }
+            return segment;
+        });
+
+        // 6. 合并过短的段落
+        const finalSegments = [];
+        let tempSegment = '';
+
+        for (const segment of segments) {
+            if (tempSegment.length + segment.length < 30) {
+                tempSegment += segment;
+            } else {
+                if (tempSegment) {
+                    finalSegments.push(tempSegment);
+                }
+                tempSegment = segment;
+            }
+        }
+
+        if (tempSegment) {
+            finalSegments.push(tempSegment);
+        }
+
+        return finalSegments.join('\n');
+    }
+
+    private static async formatChineseText(text: string): Promise<string> {
+        const { spawn } = require('child_process');
+        const scriptPath = path.join(__dirname, '..', 'scripts', 'text_formatter.py');
+        
+        return new Promise((resolve, reject) => {
+            const process = spawn('python', [scriptPath]);
+            let output = '';
+            let error = '';
+            
+            process.stdin.write(text);
+            process.stdin.end();
+            
+            process.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+            });
+            
+            process.stderr.on('data', (data: Buffer) => {
+                error += data.toString();
+            });
+            
+            process.on('close', (code: number) => {
+                if (code === 0) {
+                    resolve(output.trim());
+                } else {
+                    reject(new Error(`格式化失败: ${error}`));
+                }
+            });
+        });
     }
 } 
