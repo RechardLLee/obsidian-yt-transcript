@@ -301,7 +301,7 @@ export class TranscriptView extends ItemView {
 	private async getTranslations(paragraphs: ParagraphItem[]): Promise<{ original: string, translated: string }[]> {
 		const loadingIndicator = this.contentEl.createEl("div", {
 			cls: "translation-loading",
-			text: "正在翻译文本..."
+			text: "正在处理文本..."
 		});
 
 		try {
@@ -309,18 +309,31 @@ export class TranscriptView extends ItemView {
 			if (!this.plugin.settings.enableTranslation) {
 				return paragraphs.map(para => ({
 					original: para.text.join(' '),
-					translated: ''  // 不进行翻译
+					translated: ''
 				}));
 			}
 
-			// 使用基础的Google翻译服务
+			// 检查第一段文本的语言
+			const firstText = paragraphs[0]?.text.join(' ');
+			const isChineseContent = this.isChineseText(firstText);
+			const targetLang = this.plugin.settings.targetLang;
+
+			// 如果目标语言是中文且内容已经是中文，则不需要翻译
+			if (targetLang.toLowerCase().includes('zh') && isChineseContent) {
+				return paragraphs.map(para => ({
+					original: para.text.join(' '),
+					translated: ''
+				}));
+			}
+
+			// 如果内容是中文但目标语言不是中文，或者内容不是中文但目标语言是中文，则进行翻译
 			return await Promise.all(
 				paragraphs.map(async para => {
 					try {
 						const originalText = para.text.join(' ');
 						const translation = await this.translationService.translate(
 							originalText,
-							this.plugin.settings.targetLang
+							targetLang
 						);
 						return {
 							original: originalText,
@@ -329,7 +342,7 @@ export class TranscriptView extends ItemView {
 					} catch (error) {
 						return {
 							original: para.text.join(' '),
-							translated: '翻译失败: ' + error.message
+							translated: ''  // 翻译失败时不显示错误信息
 						};
 					}
 				})
@@ -343,6 +356,17 @@ export class TranscriptView extends ItemView {
 		} finally {
 			loadingIndicator.remove();
 		}
+	}
+
+	// 添加检测中文文本的方法
+	private isChineseText(text: string): boolean {
+		// 检查是否包含中文字符
+		const chineseRegex = /[\u4e00-\u9fa5]/;
+		// 计算中文字符的比例
+		const chineseChars = text.split('').filter(char => chineseRegex.test(char));
+		const chineseRatio = chineseChars.length / text.length;
+		// 如果中文字符占比超过30%，认为是中文内容
+		return chineseRatio > 0.3;
 	}
 
 	private async combineIntoParagraphs(transcript: TranscriptItem[], url: string): Promise<ParagraphItem[]> {
@@ -513,6 +537,11 @@ export class TranscriptView extends ItemView {
 		url: string,
 		container: HTMLElement
 	) {
+		// 检查是否是中文内容
+		const isChineseContent = this.isChineseText(translations[0]?.original || '');
+		const targetLang = this.plugin.settings.targetLang;
+		const skipTranslation = targetLang.toLowerCase().includes('zh') && isChineseContent;
+
 		paragraphs.forEach((para, index) => {
 			const blockDiv = container.createEl("div", {
 				cls: "transcript-block"
@@ -527,7 +556,7 @@ export class TranscriptView extends ItemView {
 			const timeLink = timeDiv.createEl("a", {
 				cls: "timestamp-link",
 				href: `${url}&t=${Math.floor(para.timestamp/1000)}`,
-				text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
+				text: `${formatTimestamp(para.timestamp)}${para.endTimestamp ? ` - ${formatTimestamp(para.endTimestamp)}` : ''}`
 			});
 			
 			timeLink.setAttr("target", "_blank");
@@ -537,29 +566,28 @@ export class TranscriptView extends ItemView {
 				cls: "content-container"
 			});
 			
-			// 原文 - 作为单个段落显示
+			// 原文
 			const originalDiv = contentDiv.createEl("div", {
 				cls: "original-text"
 			});
 			
-			// 将原文中的换行替换为空格，确保文本在一个段落内显示
 			const formattedOriginalText = translations[index].original.replace(/\n+/g, ' ').trim();
 			originalDiv.createSpan({
 				text: formattedOriginalText
 			});
 			
-			// 分隔线
-			contentDiv.createEl("div", {
-				cls: "translation-divider"
-			});
-			
-			// 译文 - 同样作为单个段落显示
-			if (translations[index].translated) {
-				const translatedDiv = contentDiv.createEl("div", {
-					cls: translations[index].translated.includes('翻译失败') ? 'translation-error' : 'translated-text'
+			// 只有在需要显示翻译时才添加分隔线和翻译文本
+			if (!skipTranslation && translations[index].translated) {
+				// 分隔线
+				contentDiv.createEl("div", {
+					cls: "translation-divider"
 				});
 				
-				// 将译文中的换行符替换为空格，确保文本在一个段落内显示
+				// 译文
+				const translatedDiv = contentDiv.createEl("div", {
+					cls: 'translated-text'
+				});
+				
 				const formattedTranslatedText = translations[index].translated.replace(/\n+/g, ' ').trim();
 				translatedDiv.createSpan({
 					text: formattedTranslatedText
@@ -822,7 +850,7 @@ export class TranscriptView extends ItemView {
 		});
 		aiOptimizeButton.style.marginRight = "10px";
 
-		// 添加AI翻译按钮
+		// 添加AI翻译按��
 		const aiTranslateButton = buttonContainer.createEl("button", {
 			cls: "save-button",
 			text: "AI翻译"
