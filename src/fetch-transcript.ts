@@ -22,6 +22,7 @@ export class TranscriptError extends Error {
 export interface TranscriptConfig {
 	lang?: string;
 	country?: string;
+	useAI?: boolean;
 }
 
 export interface TranscriptResponse {
@@ -44,7 +45,8 @@ export class TranscriptFetcher {
 			if (url.includes('bilibili.com')) {
 				const { BilibiliTranscript } = await import("./bilibili-transcript");
 				return await BilibiliTranscript.fetchTranscript(url, {
-					lang: config?.lang
+					lang: config?.lang,
+					useAI: config?.useAI
 				});
 			} else {
 				return await this.fetchYoutubeTranscript(url, config);
@@ -108,21 +110,68 @@ export class TranscriptFetcher {
 		);
 
 		const chunks = resXML.getElementsByTagName("text");
+		const lines = chunks.map((cue: any) => ({
+			text: this.cleanText(cue.textContent
+				.replaceAll("&#39;", "'")
+				.replaceAll("&amp;", "&")
+				.replaceAll("&quot;", '"')
+				.replaceAll("&apos;", "'")
+				.replaceAll("&lt;", "<")
+				.replaceAll("&gt;", ">")),
+			duration: parseFloat(cue.attributes.dur) * 1000,
+			offset: parseFloat(cue.attributes.start) * 1000,
+		}));
+
+		const optimizedLines = config?.useAI ? lines : this.optimizeSubtitles(lines);
 
 		return {
 			title: title,
-			lines: chunks.map((cue: any) => ({
-				text: cue.textContent
-					.replaceAll("&#39;", "'")
-					.replaceAll("&amp;", "&")
-					.replaceAll("&quot;", '"')
-					.replaceAll("&apos;", "'")
-					.replaceAll("&lt;", "<")
-					.replaceAll("&gt;", ">"),
-				duration: parseFloat(cue.attributes.dur) * 1000,
-				offset: parseFloat(cue.attributes.start) * 1000,
-			})),
+			lines: optimizedLines,
 		};
+	}
+
+	private static optimizeSubtitles(subtitles: TranscriptLine[]): TranscriptLine[] {
+		const mergedSubtitles = this.mergeShortSubtitles(subtitles);
+		
+		const cleanedSubtitles = mergedSubtitles.map(line => ({
+			...line,
+			text: this.cleanText(line.text)
+		}));
+
+		return cleanedSubtitles.sort((a, b) => a.offset - b.offset);
+	}
+
+	private static cleanText(text: string): string {
+		return text
+			.replace(/\s+/g, ' ')
+			.replace(/[【】\[\]]/g, '')
+			.replace(/\(.*?\)/g, '')
+			.replace(/\{.*?\}/g, '')
+			.replace(/[,.!?。，！？]+(\s|$)/g, match => match.trim() + ' ')
+			.replace(/^\s+|\s+$/g, '')
+			.replace(/^[-–—]+\s*/, '');
+	}
+
+	private static mergeShortSubtitles(lines: TranscriptLine[]): TranscriptLine[] {
+		const MIN_DURATION = 1000;
+		const MAX_GAP = 500;
+		
+		return lines.reduce((acc: TranscriptLine[], current: TranscriptLine, index: number) => {
+			if (acc.length === 0) {
+				return [current];
+			}
+
+			const last = acc[acc.length - 1];
+			const gap = current.offset - (last.offset + last.duration);
+
+			if (current.duration < MIN_DURATION || gap < MAX_GAP) {
+				last.text += ' ' + current.text;
+				last.duration = current.offset + current.duration - last.offset;
+				return acc;
+			}
+
+			return [...acc, current];
+		}, []);
 	}
 
 	private static async checkSubtitlesExist(url: string): Promise<boolean> {

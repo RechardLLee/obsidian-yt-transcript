@@ -8,6 +8,7 @@ import { formatTimestamp } from "./timestampt-utils";
 import { getTranscriptBlocks, highlightText } from "./render-utils";
 import { TranslationService, GoogleTranslationService } from "./translation-service";
 import type YTranscriptPlugin from "./main";
+import { APIServiceFactory } from "./api-services";
 
 interface VideoMetadata {
 	title: string;
@@ -273,6 +274,12 @@ export class TranscriptView extends ItemView {
 			let translations: { original: string, translated: string }[] = [];
 			if (this.plugin.settings.enableTranslation) {
 				translations = await this.getTranslations(paragraphs);
+			} else {
+				// 如果未启用翻译，创建只包含原文的数组
+				translations = paragraphs.map(para => ({
+					original: para.text.join(' '),
+					translated: ''
+				}));
 			}
 
 			// 渲染内容
@@ -294,80 +301,22 @@ export class TranscriptView extends ItemView {
 	private async getTranslations(paragraphs: ParagraphItem[]): Promise<{ original: string, translated: string }[]> {
 		const loadingIndicator = this.contentEl.createEl("div", {
 			cls: "translation-loading",
-			text: "正在优化和翻译文本..."
+			text: "正在翻译文本..."
 		});
 
 		try {
-			if (this.plugin.settings.useDeepseek && this.plugin.settings.deepseekApiKey) {
-				const { DeepseekTranslationService } = await import("./deepseek-translation-service");
-				const deepseekTranslator = new DeepseekTranslationService(
-					this.plugin.settings.deepseekApiKey,
-					this.plugin.settings.deepseekApiUrl
-				);
+			// 如果没有启用翻译，直接返回原文
+			if (!this.plugin.settings.enableTranslation) {
+				return paragraphs.map(para => ({
+					original: para.text.join(' '),
+					translated: ''  // 不进行翻译
+				}));
+			}
 
-				return await Promise.all(
-					paragraphs.map(async para => {
-						try {
-							const originalText = para.text.join(' ');
-							const translation = await deepseekTranslator.translate(
-								originalText,
-								this.plugin.settings.targetLang
-							);
-							
-							return {
-								original: originalText,
-								translated: translation
-							};
-						} catch (error) {
-							console.error("DeepSeek translation failed:", error);
-							// 如果 DeepSeek 翻译失败，回退到其他翻译服务
-							return this.fallbackTranslation(para);
-						}
-					})
-				);
-			} else if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
-				const { TextOptimizer } = await import("./text-optimizer");
-				const { KimiTranslationService } = await import("./kimi-translation-service");
-				
-				const textOptimizer = new TextOptimizer(
-					this.plugin.settings.kimiApiKey,
-					this.plugin.settings.kimiApiUrl
-				);
-				const kimiTranslator = new KimiTranslationService(
-					this.plugin.settings.kimiApiKey,
-					this.plugin.settings.kimiApiUrl
-				);
-
-				return await Promise.all(
-					paragraphs.map(async para => {
-						try {
-							const originalText = para.text.join(' ');
-							const optimizedForTranslation = await textOptimizer.optimizeText(originalText);
-							const translation = await kimiTranslator.translate(
-								optimizedForTranslation,
-								this.plugin.settings.targetLang
-							);
-							
-							return {
-								original: originalText,
-								translated: translation
-							};
-						} catch (error) {
-							console.error("AI processing failed:", error);
-							const translation = await this.translationService.translate(
-								para.text.join(' '),
-								this.plugin.settings.targetLang
-							);
-							return {
-								original: para.text.join(' '),
-								translated: translation
-							};
-						}
-					})
-				);
-			} else {
-				return await Promise.all(
-					paragraphs.map(async para => {
+			// 使用基础的Google翻译服务
+			return await Promise.all(
+				paragraphs.map(async para => {
+					try {
 						const originalText = para.text.join(' ');
 						const translation = await this.translationService.translate(
 							originalText,
@@ -377,41 +326,22 @@ export class TranscriptView extends ItemView {
 							original: originalText,
 							translated: translation
 						};
-					})
-				);
-			}
+					} catch (error) {
+						return {
+							original: para.text.join(' '),
+							translated: '翻译失败: ' + error.message
+						};
+					}
+				})
+			);
+		} catch (error) {
+			console.error('Translation error:', error);
+			return paragraphs.map(para => ({
+				original: para.text.join(' '),
+				translated: ''
+			}));
 		} finally {
 			loadingIndicator.remove();
-		}
-	}
-
-	private async fallbackTranslation(para: ParagraphItem): Promise<{ original: string, translated: string }> {
-		const originalText = para.text.join(' ');
-		try {
-			if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
-				const { KimiTranslationService } = await import("./kimi-translation-service");
-				const kimiTranslator = new KimiTranslationService(
-					this.plugin.settings.kimiApiKey,
-					this.plugin.settings.kimiApiUrl
-				);
-				const translation = await kimiTranslator.translate(
-					originalText,
-					this.plugin.settings.targetLang
-				);
-				return { original: originalText, translated: translation };
-			} else {
-				const translation = await this.translationService.translate(
-					originalText,
-					this.plugin.settings.targetLang
-				);
-				return { original: originalText, translated: translation };
-			}
-		} catch (error) {
-			console.error("Fallback translation failed:", error);
-			return {
-				original: originalText,
-				translated: "翻译失败: 所有翻译服务都无法使用"
-			};
 		}
 	}
 
@@ -443,7 +373,7 @@ export class TranscriptView extends ItemView {
 				
 				return this.createParagraphsFromSentences(sentences, transcript, url);
 			} catch (error) {
-				console.error("AI optimization failed:", error);
+				console.error("AI优化失败:", error);
 				// 如果 AI 优化失败，回退到普通的段落划分
 				return this.createParagraphsDirectly(transcript, url);
 			}
@@ -486,7 +416,7 @@ export class TranscriptView extends ItemView {
 			}
 			sentenceCount++;
 
-			// 判断否应该结束前落
+			// 判断否应该前落
 			const shouldEndParagraph = 
 				(sentenceCount >= MIN_SENTENCES && sentence.match(/[.!?。！？]$/)) ||
 				sentenceCount >= MAX_SENTENCES ||
@@ -612,7 +542,7 @@ export class TranscriptView extends ItemView {
 				cls: "original-text"
 			});
 			
-			// 将原文中的换行符替换为空格，确保文本在一个段落内显示
+			// 将原文中的换行替换为空格，确保文本在一个段落内显示
 			const formattedOriginalText = translations[index].original.replace(/\n+/g, ' ').trim();
 			originalDiv.createSpan({
 				text: formattedOriginalText
@@ -710,6 +640,7 @@ export class TranscriptView extends ItemView {
 			data = await TranscriptFetcher.fetchTranscript(url, {
 				lang,
 				country,
+				useAI: this.plugin.settings.useAIOptimization
 			});
 
 			if (!data) throw Error();
@@ -884,11 +815,51 @@ export class TranscriptView extends ItemView {
 			cls: "save-button-container"
 		});
 
+		// 添加AI优化按钮
+		const aiOptimizeButton = buttonContainer.createEl("button", {
+			cls: "save-button",
+			text: "AI优化"
+		});
+		aiOptimizeButton.style.marginRight = "10px";
+
+		// 添加AI翻译按钮
+		const aiTranslateButton = buttonContainer.createEl("button", {
+			cls: "save-button",
+			text: "AI翻译"
+		});
+		aiTranslateButton.style.marginRight = "10px";
+
+		// 保存按钮
 		const saveButton = buttonContainer.createEl("button", {
 			cls: "save-button",
 			text: "保存为 Markdown"
 		});
 
+		// AI优化按钮点击事件
+		aiOptimizeButton.addEventListener("click", async () => {
+			aiOptimizeButton.disabled = true;
+			aiOptimizeButton.textContent = "优化中...";
+			try {
+				await this.handleAIOptimize();
+			} finally {
+				aiOptimizeButton.disabled = false;
+				aiOptimizeButton.textContent = "AI优化";
+			}
+		});
+
+		// AI翻译按钮点击事件
+		aiTranslateButton.addEventListener("click", async () => {
+			aiTranslateButton.disabled = true;
+			aiTranslateButton.textContent = "翻译中...";
+			try {
+				await this.handleAITranslate();
+			} finally {
+				aiTranslateButton.disabled = false;
+				aiTranslateButton.textContent = "AI翻译";
+			}
+		});
+
+		// 保存按钮点击事件
 		saveButton.addEventListener("click", async () => {
 			await this.saveAsMarkdown();
 		});
@@ -897,7 +868,7 @@ export class TranscriptView extends ItemView {
 	private async saveAsMarkdown() {
 		try {
 			if (!this.videoData || !this.videoTitle) {
-				new Notice("没有可保存的数据");
+				new Notice("没有可保存的据");
 				return;
 			}
 
@@ -1060,6 +1031,116 @@ export class TranscriptView extends ItemView {
 `;
 
 		return markdown;
+	}
+
+	private async handleAIOptimize() {
+		const apiService = APIServiceFactory.getService(this.plugin.settings);
+		if (!apiService) {
+			new Notice("请先在设置中配置API密钥");
+			return;
+		}
+
+		try {
+			const blocks = this.dataContainerEl?.querySelectorAll('.transcript-block');
+			if (!blocks) return;
+
+			const loadingIndicator = this.contentEl.createEl("div", {
+				cls: "translation-loading",
+				text: "正在使用AI进行优化..."
+			});
+
+			// 将 NodeList 转换为数组
+			const blockArray = Array.from(blocks);
+
+			for (const block of blockArray) {
+				const originalTextEl = block.querySelector('.original-text');
+				if (!originalTextEl || !originalTextEl.textContent) continue;
+
+				try {
+					// 只优化原文，保持翻译不变
+					const optimizedText = await apiService.optimize(originalTextEl.textContent);
+					originalTextEl.textContent = optimizedText;
+				} catch (error) {
+					console.error('优化失败:', error);
+					new Notice(`部分内容优化失败: ${error.message}`);
+				}
+			}
+
+			loadingIndicator.remove();
+			new Notice("AI优化完成");
+		} catch (error) {
+			new Notice("AI优化失败: " + error.message);
+		}
+	}
+
+	private async handleAITranslate() {
+		const apiService = APIServiceFactory.getService(this.plugin.settings);
+		if (!apiService) {
+			new Notice("请先在设置中配置API密钥");
+			return;
+		}
+
+		try {
+			const blocks = this.dataContainerEl?.querySelectorAll('.transcript-block');
+			if (!blocks) return;
+
+			const loadingIndicator = this.contentEl.createEl("div", {
+				cls: "translation-loading",
+				text: "正在使用AI进行翻译..."
+			});
+
+			// 将 NodeList 转换为数组
+			const blockArray = Array.from(blocks);
+
+			for (const block of blockArray) {
+				const originalText = block.querySelector('.original-text')?.textContent;
+				if (!originalText) continue;
+
+				try {
+					const translatedText = await apiService.translate(
+						originalText,
+						this.plugin.settings.targetLang
+					);
+
+					// 更新或创建翻译文本元素
+					let translatedDiv = block.querySelector('.translated-text');
+					if (!translatedDiv) {
+						const contentDiv = block.querySelector('.content-container');
+						if (!contentDiv) continue;
+
+						// 添加分隔线（如果不存在）
+						if (!contentDiv.querySelector('.translation-divider')) {
+							contentDiv.createEl("div", { cls: "translation-divider" });
+						}
+
+						translatedDiv = contentDiv.createEl('div', { cls: 'translated-text' });
+					} else {
+						translatedDiv.className = 'translated-text'; // 重置类名（移除可能的error类）
+					}
+					translatedDiv.textContent = translatedText;
+				} catch (error) {
+					console.error('翻译失败:', error);
+					// 显示错误信息
+					let translatedDiv = block.querySelector('.translated-text');
+					if (!translatedDiv) {
+						const contentDiv = block.querySelector('.content-container');
+						if (!contentDiv) continue;
+						
+						if (!contentDiv.querySelector('.translation-divider')) {
+							contentDiv.createEl("div", { cls: "translation-divider" });
+						}
+						
+						translatedDiv = contentDiv.createEl('div', { cls: 'translation-error' });
+					}
+					translatedDiv.textContent = '翻译失败: ' + error.message;
+				}
+			}
+
+			loadingIndicator.remove();
+			new Notice("AI翻译完成");
+		} catch (error) {
+			new Notice("AI翻译失败: " + error.message);
+		}
 	}
 }
 
