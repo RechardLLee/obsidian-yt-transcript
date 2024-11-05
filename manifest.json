@@ -1,10 +1,10 @@
 {
-	"id": "ytranscript",
-	"name": "YTranscript",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "This is simple plugin to fetch transcription for Youtube.",
-	"author": "Łukasz Strzępek",
-	"authorUrl": "https://github.com/lstrzepek",
+	"id": "transcript",
+	"name": "Biliblili&YoutubeTranscript",
+	"version": "0.0.5",
+	"minAppVersion": "0.0.0",
+	"description": "This is simple plugin to fetch transcription for Youtube & Bilibili.",
+	"author": "Juntong Li",
+	"authorUrl": "https://github.com/RechardLLee",
 	"isDesktopOnly": false
 }
