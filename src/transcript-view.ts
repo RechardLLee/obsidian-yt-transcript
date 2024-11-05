@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Menu } from "obsidian";
+import { ItemView, WorkspaceLeaf, Menu, Notice } from "obsidian";
 import {
 	TranscriptResponse,
 	YoutubeTranscript,
@@ -462,7 +462,7 @@ export class TranscriptView extends ItemView {
 			}
 			sentenceCount++;
 
-			// 判断是否应该结束当前段落
+			// 判断否应该结束前段落
 			const shouldEndParagraph = 
 				(sentenceCount >= MIN_SENTENCES && sentence.match(/[.!?。！？]$/)) ||
 				sentenceCount >= MAX_SENTENCES ||
@@ -655,8 +655,6 @@ export class TranscriptView extends ItemView {
 	 * This is called when the view is loaded
 	 */
 	async setEphemeralState(state: { url: string }): Promise<void> {
-		if (this.isDataLoaded) return;
-
 		const leafIndex = this.getLeafIndex();
 
 		if (state.url) {
@@ -668,6 +666,9 @@ export class TranscriptView extends ItemView {
 		const url = leafUrls[leafIndex];
 
 		try {
+			// 添加 URL 输入框
+			this.renderUrlInput(url);
+
 			if (this.loaderContainerEl === undefined) {
 				this.loaderContainerEl = this.contentEl.createEl("div");
 			} else {
@@ -744,5 +745,97 @@ export class TranscriptView extends ItemView {
 	}
 	getIcon(): string {
 		return "scroll";
+	}
+
+	// 在 renderSearchInput 方法之前添加新的方法
+	private renderUrlInput(currentUrl: string) {
+		const urlContainer = this.contentEl.createEl("div", {
+			cls: "url-input-container"
+		});
+
+		// 创建输入框容器，使用 flex 布局
+		const inputWrapper = urlContainer.createEl("div", {
+			cls: "url-input-wrapper"
+		});
+		inputWrapper.style.display = "flex";
+		inputWrapper.style.gap = "10px";
+		inputWrapper.style.marginBottom = "20px";
+
+		// 创建输入框
+		const urlInputEl = inputWrapper.createEl("input", {
+			cls: "url-input",
+			attr: {
+				type: "text",
+				placeholder: "输入 YouTube 视频链接...",
+				value: currentUrl
+			}
+		});
+		urlInputEl.style.flex = "1";
+		urlInputEl.style.padding = "8px";
+
+		// 创建确认按钮
+		const confirmButton = inputWrapper.createEl("button", {
+			cls: "url-confirm-button",
+			text: "确认"
+		});
+		confirmButton.style.padding = "8px 16px";
+
+		// 修改按钮点击事件处理
+		confirmButton.addEventListener("click", async () => {
+			const newUrl = urlInputEl.value.trim();
+			if (newUrl) {
+				try {
+					// 清空现有内容
+					this.contentEl.empty();
+					this.contentEl.createEl("h4", { text: "Transcript" });
+					
+					// 重置状态
+					this.isDataLoaded = false;
+					this.dataContainerEl = undefined;
+					this.loaderContainerEl = undefined;
+					this.errorContainerEl = undefined;
+					
+					// 更新 leafUrls
+					const leafIndex = this.getLeafIndex();
+					this.plugin.settings.leafUrls[leafIndex] = newUrl;
+					await this.plugin.saveSettings();
+					
+					// 重新加载新的字幕
+					await this.setEphemeralState({ url: newUrl });
+				} catch (error) {
+					console.error("Failed to load new transcript:", error);
+					new Notice("加载字幕失败，请检查链接是否正确");
+				}
+			}
+		});
+
+		// 修改回车键事件处理
+		urlInputEl.addEventListener("keypress", async (e) => {
+			if (e.key === "Enter") {
+				const newUrl = urlInputEl.value.trim();
+				if (newUrl) {
+					try {
+						this.contentEl.empty();
+						this.contentEl.createEl("h4", { text: "Transcript" });
+						
+						// 重置状态
+						this.isDataLoaded = false;
+						this.dataContainerEl = undefined;
+						this.loaderContainerEl = undefined;
+						this.errorContainerEl = undefined;
+						
+						// 更新 leafUrls
+						const leafIndex = this.getLeafIndex();
+						this.plugin.settings.leafUrls[leafIndex] = newUrl;
+						await this.plugin.saveSettings();
+						
+						await this.setEphemeralState({ url: newUrl });
+					} catch (error) {
+						console.error("Failed to load new transcript:", error);
+						new Notice("加载字幕失败，请检查链接是否正确");
+					}
+				}
+			}
+		});
 	}
 }

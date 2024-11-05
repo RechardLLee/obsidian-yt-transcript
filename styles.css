@@ -159,3 +159,44 @@ If your plugin does not need CSS, delete this file.
     font-size: 0.9em;
     text-align: center;
 }
+
+/* URL 输入框相关样式 */
+.url-input-container {
+    margin-top: 10px;
+}
+
+.url-input-wrapper {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.url-input {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.url-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-hover);
+}
+
+.url-confirm-button {
+    padding: 8px 16px;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+.url-confirm-button:hover {
+    background-color: var(--interactive-accent-hover);
+}
