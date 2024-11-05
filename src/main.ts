@@ -11,6 +11,7 @@ import { TranscriptView, TRANSCRIPT_TYPE_VIEW } from "./transcript-view";
 import { PromptModal } from "./prompt-modal";
 import { KimiTranslationService } from "./kimi-translation-service";
 import { DeepseekTranslationService } from "./deepseek-translation-service";
+import { APIServiceFactory } from "./api-services";
 
 interface YTranscriptSettings {
 	timestampMod: number;
@@ -31,6 +32,7 @@ interface YTranscriptSettings {
 	bilibiliCookie: string;
 	bilibiliScriptPath: string;
 	useAIOptimization: boolean;
+	selectedAIService: 'kimi' | 'deepseek' | null;
 }
 
 const DEFAULT_SETTINGS: YTranscriptSettings = {
@@ -52,6 +54,7 @@ const DEFAULT_SETTINGS: YTranscriptSettings = {
 	bilibiliCookie: '',
 	bilibiliScriptPath: '',
 	useAIOptimization: false,
+	selectedAIService: null,
 };
 
 export default class YTranscriptPlugin extends Plugin {
@@ -157,10 +160,28 @@ class YTranslateSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// Kimi AI 设置
-		containerEl.createEl("h2", { text: "Kimi AI 设置" });
-		
+		// AI 服务选择
+		containerEl.createEl("h2", { text: "AI 服务设置" });
+
 		new Setting(containerEl)
+			.setName("选择 AI 服务")
+			.setDesc("选择要使用的 AI 服务")
+			.addDropdown(dropdown => dropdown
+				.addOption('', '不使用 AI')
+				.addOption('kimi', 'Kimi AI')
+				.addOption('deepseek', 'DeepSeek AI')
+				.setValue(this.plugin.settings.selectedAIService || '')
+				.onChange(async (value) => {
+					this.plugin.settings.selectedAIService = value as 'kimi' | 'deepseek' | null;
+					await this.plugin.saveSettings();
+				}));
+
+		// Kimi AI 设置
+		containerEl.createEl("h3", { text: "Kimi AI 设置" });
+		
+		const kimiContainer = containerEl.createDiv('kimi-settings-container');
+		
+		new Setting(kimiContainer)
 			.setName("Kimi API密钥")
 			.setDesc("设置Kimi AI服务的API密钥")
 			.addText((text) =>
@@ -173,7 +194,7 @@ class YTranslateSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
+		new Setting(kimiContainer)
 			.setName("Kimi API地址")
 			.setDesc("设置Kimi AI服务的API地址")
 			.addText((text) =>
@@ -186,10 +207,37 @@ class YTranslateSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// DeepSeek AI 设置
-		containerEl.createEl("h2", { text: "DeepSeek AI 设置" });
+		// 添加测试按钮
+		new Setting(kimiContainer)
+			.setName("测试 Kimi API")
+			.setDesc("测试 API 连接是否正常")
+			.addButton((button) => button
+				.setButtonText("测试连接")
+				.onClick(async () => {
+					button.setDisabled(true);
+					button.setButtonText("测试中...");
+					try {
+						const apiService = APIServiceFactory.createKimiService(
+							this.plugin.settings.kimiApiKey,
+							this.plugin.settings.kimiApiUrl
+						);
+						await apiService.translate("Hello, this is a test message.", "zh-CN");
+						new Notice("Kimi API 连接测试成功！");
+					} catch (error) {
+						console.error("Kimi API 测试失败:", error);
+						new Notice(`Kimi API 测试失败: ${error.message}`);
+					} finally {
+						button.setDisabled(false);
+						button.setButtonText("测试连接");
+					}
+				}));
 
-		new Setting(containerEl)
+		// DeepSeek AI 设置
+		containerEl.createEl("h3", { text: "DeepSeek AI 设置" });
+		
+		const deepseekContainer = containerEl.createDiv('deepseek-settings-container');
+
+		new Setting(deepseekContainer)
 			.setName("DeepSeek API密钥")
 			.setDesc("设置DeepSeek AI服务的API密钥")
 			.addText((text) =>
@@ -202,7 +250,7 @@ class YTranslateSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
+		new Setting(deepseekContainer)
 			.setName("DeepSeek API地址")
 			.setDesc("设置DeepSeek AI服务的API地址")
 			.addText((text) =>
@@ -214,6 +262,31 @@ class YTranslateSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// 添加测试按钮
+		new Setting(deepseekContainer)
+			.setName("测试 DeepSeek API")
+			.setDesc("测试 API 连接是否正常")
+			.addButton((button) => button
+				.setButtonText("测试连接")
+				.onClick(async () => {
+					button.setDisabled(true);
+					button.setButtonText("测试中...");
+					try {
+						const apiService = APIServiceFactory.createDeepSeekService(
+							this.plugin.settings.deepseekApiKey,
+							this.plugin.settings.deepseekApiUrl
+						);
+						await apiService.translate("Hello, this is a test message.", "zh-CN");
+						new Notice("DeepSeek API 连接测试成功！");
+					} catch (error) {
+						console.error("DeepSeek API 测试失败:", error);
+						new Notice(`DeepSeek API 测试失败: ${error.message}`);
+					} finally {
+						button.setDisabled(false);
+						button.setButtonText("测试连接");
+					}
+				}));
 
 		// B站设置
 		containerEl.createEl("h2", { text: "B站设置" });

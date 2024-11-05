@@ -9,8 +9,8 @@ export class KimiTranslationService implements TranslationService {
         this.API_URL = apiUrl;
     }
 
-    async translate(text: string, targetLang: string): Promise<string> {
-        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下英文字幕翻译成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。直接输出翻译结果，不要添加任何前缀说明。
+    async translate(text: string, targetLang: string, onProgress?: (text: string) => void): Promise<string> {
+        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下字幕转换成成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。直接输出翻译结果，不要添加任何前缀说明。
 要求：
 1. 保持原文的意思和语气
 2. 使用自然、地道的表达
@@ -19,9 +19,11 @@ export class KimiTranslationService implements TranslationService {
 5. 适当调整语序，使译文更符合中文表达习惯
 6. 对于文化相关的内容，进行恰当的本地化处理
 7. 确保译文通顺易读，符合中文语言习惯
-8. 不要添加"以下是翻译"等任何前缀`;
+8. 直接输出翻译结果，不要添加任何前缀说明
+9. 对口语化的表达进行适当的书面语转换
+10. 保持段落的整体连贯性`;
 
-        const userPrompt = text;  // 直接使用文本，不添加额外说明
+        const userPrompt = text;
 
         try {
             const response = await fetch(this.API_URL, {
@@ -43,7 +45,7 @@ export class KimiTranslationService implements TranslationService {
                         }
                     ],
                     use_search: false,
-                    stream: false
+                    stream: true
                 })
             });
 
@@ -51,8 +53,32 @@ export class KimiTranslationService implements TranslationService {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const data = await response.json();
-            return data.choices[0].message.content;
+            const reader = response.body?.getReader();
+            let result = '';
+
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = new TextDecoder().decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.choices[0].delta.content) {
+                                result += data.choices[0].delta.content;
+                                if (onProgress) {
+                                    onProgress(result);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
         } catch (error: any) {
             console.error("Translation failed:", error);
             throw new Error(error?.message || '翻译服务出错');

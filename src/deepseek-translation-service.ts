@@ -9,8 +9,8 @@ export class DeepseekTranslationService implements TranslationService {
         this.API_URL = apiUrl;
     }
 
-    async translate(text: string, targetLang: string): Promise<string> {
-        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下英文字幕翻译成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。
+    async translate(text: string, targetLang: string, onProgress?: (text: string) => void): Promise<string> {
+        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下字幕转换成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。
 要求：
 1. 保持原文的意思和语气
 2. 使用自然、地道的表达
@@ -42,7 +42,7 @@ export class DeepseekTranslationService implements TranslationService {
                             content: text
                         }
                     ],
-                    stream: false
+                    stream: true
                 })
             });
 
@@ -50,8 +50,32 @@ export class DeepseekTranslationService implements TranslationService {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const data = await response.json();
-            return data.choices[0].message.content;
+            const reader = response.body?.getReader();
+            let result = '';
+
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = new TextDecoder().decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.choices[0].delta.content) {
+                                result += data.choices[0].delta.content;
+                                if (onProgress) {
+                                    onProgress(result);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
         } catch (error: any) {
             console.error("DeepSeek translation failed:", error);
             throw new Error(error?.message || 'DeepSeek 翻译服务出错');

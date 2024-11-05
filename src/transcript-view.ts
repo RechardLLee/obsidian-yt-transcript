@@ -379,7 +379,7 @@ export class TranscriptView extends ItemView {
 		// 移除多余空格的函数
 		const normalizeSpaces = (text: string) => text.replace(/\s+/g, ' ').trim();
 
-		// 如果启用了 AI 优化且有可用的 API
+		// 如果启用了 AI 优化且有可的 API
 		if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
 			try {
 				const { TextOptimizer } = await import("./text-optimizer");
@@ -488,7 +488,7 @@ export class TranscriptView extends ItemView {
 			const text = item.text.trim();
 			const timestamp = item.timestamp || 0;
 
-			// 如果是第一个条目，初始化开始时间
+			// ��果是第一目��初始化开始时间
 			if (currentParagraph.texts.length === 0) {
 				currentParagraph.startTime = timestamp;
 			}
@@ -646,7 +646,7 @@ export class TranscriptView extends ItemView {
 		const url = leafUrls[leafIndex];
 
 		try {
-			// 添加 URL 输入框
+			// 添加 URL 入框
 			this.renderUrlInput(url);
 
 			if (this.loaderContainerEl === undefined) {
@@ -910,7 +910,7 @@ export class TranscriptView extends ItemView {
 				advanced: {
 					link: metadata.url,
 					summary: "",
-					srt: this.generateSRT(true)  // 生成带时间戳的完整字幕
+					srt: this.generateSRT(true)  // 生成带时间戳的整字幕
 				}
 			};
 
@@ -999,7 +999,7 @@ export class TranscriptView extends ItemView {
 
 ## 视频信息
 - 标题：${metadata.title}
-- ![](${metadata.url})
+- 链接：${metadata.url}
 - 保存时间：${new Date(metadata.timestamp).toLocaleString()}
 
 ## 字幕内容\n\n`;
@@ -1007,8 +1007,8 @@ export class TranscriptView extends ItemView {
 		// 获取所有字幕块
 		const blocks = this.contentEl.querySelectorAll(".transcript-block");
 		
-		// 创建双语字幕部分
-		let bilingualTranscript = "";
+		// 创建字幕内容
+		let transcriptContent = "";
 		
 		blocks.forEach(block => {
 			// 获取时间戳
@@ -1016,33 +1016,27 @@ export class TranscriptView extends ItemView {
 			const timestamp = timestampEl?.textContent || "";
 			const timestampHref = timestampEl?.getAttribute("href") || "";
 			
-			// 获取原文（英文）并整理格式
-			const originalText = block.querySelector(".original-text")?.textContent?.trim() || "";
-			const formattedOriginalText = originalText
-				.replace(/\n+/g, ' ')  // 替换所有换行为空格
-				.replace(/\s+/g, ' ')  // 替换多个空格为单个空格
-				.trim();
+			// 获取原文
+			const originalTextEl = block.querySelector(".original-text");
+			const originalText = originalTextEl?.textContent?.trim() || "";
 			
-			// 获取译文（中文）并整理格式
-			const translatedText = block.querySelector(".translated-text")?.textContent?.trim() || "";
-			const formattedTranslatedText = translatedText
-				.replace(/\n+/g, ' ')
-				.replace(/\s+/g, ' ')
-				.trim();
+			// 获取翻译文本（如果存在）
+			const translatedTextEl = block.querySelector(".translated-text");
+			const translatedText = translatedTextEl?.textContent?.trim() || "";
 			
-			// 添加时间戳和英文（保持原有格式）
-			bilingualTranscript += `[${timestamp}](${timestampHref})\n\n${formattedOriginalText}\n\n`;
+			// 添加时间戳和原文
+			transcriptContent += `${timestamp} ${originalText}\n\n`;
 			
-			// 如果有有效的中文翻译，添加中文
-			if (formattedTranslatedText && !formattedTranslatedText.includes('翻译失败')) {
-				bilingualTranscript += `译文：${formattedTranslatedText}\n\n`;
+			// 如果有翻译且不是错误信息，添加翻译
+			if (translatedText && !translatedText.includes('翻译失败')) {
+				transcriptContent += `${translatedText}\n\n`;
 			}
 			
 			// 添加分隔线
-			bilingualTranscript += `---\n\n`;
+			transcriptContent += `---\n\n`;
 		});
 
-		markdown += bilingualTranscript;
+		markdown += transcriptContent;
 		
 		markdown += `
 ## 笔记
@@ -1055,50 +1049,16 @@ export class TranscriptView extends ItemView {
 		return markdown;
 	}
 
-	private async handleAIOptimize() {
-		const apiService = APIServiceFactory.getService(this.plugin.settings);
-		if (!apiService) {
-			new Notice("请先在设置中配置API密钥");
+	private async handleAITranslate() {
+		// 检查是否选择了 AI 服务
+		if (!this.plugin.settings.selectedAIService) {
+			new Notice("请先在设置中选择 AI 服务");
 			return;
 		}
 
-		try {
-			const blocks = this.dataContainerEl?.querySelectorAll('.transcript-block');
-			if (!blocks) return;
-
-			const loadingIndicator = this.contentEl.createEl("div", {
-				cls: "translation-loading",
-				text: "正在使用AI进行优化..."
-			});
-
-			// 将 NodeList 转换为数组
-			const blockArray = Array.from(blocks);
-
-			for (const block of blockArray) {
-				const originalTextEl = block.querySelector('.original-text');
-				if (!originalTextEl || !originalTextEl.textContent) continue;
-
-				try {
-					// 只优化原文，保持翻译不变
-					const optimizedText = await apiService.optimize(originalTextEl.textContent);
-					originalTextEl.textContent = optimizedText;
-				} catch (error) {
-					console.error('优化失败:', error);
-					new Notice(`部分内容优化失败: ${error.message}`);
-				}
-			}
-
-			loadingIndicator.remove();
-			new Notice("AI优化完成");
-		} catch (error) {
-			new Notice("AI优化失败: " + error.message);
-		}
-	}
-
-	private async handleAITranslate() {
 		const apiService = APIServiceFactory.getService(this.plugin.settings);
 		if (!apiService) {
-			new Notice("请先在设置中配置API密钥");
+			new Notice(`请先在设置中配置 ${this.plugin.settings.selectedAIService === 'kimi' ? 'Kimi' : 'DeepSeek'} API密钥`);
 			return;
 		}
 
@@ -1111,7 +1071,6 @@ export class TranscriptView extends ItemView {
 				text: "正在使用AI进行翻译..."
 			});
 
-			// 将 NodeList 转换为数组
 			const blockArray = Array.from(blocks);
 
 			for (const block of blockArray) {
@@ -1119,30 +1078,31 @@ export class TranscriptView extends ItemView {
 				if (!originalText) continue;
 
 				try {
-					const translatedText = await apiService.translate(
-						originalText,
-						this.plugin.settings.targetLang
-					);
-
-					// 更新或创建翻译文本元素
+					// 创建或获取翻译文本元素
 					let translatedDiv = block.querySelector('.translated-text');
-					if (!translatedDiv) {
-						const contentDiv = block.querySelector('.content-container');
-						if (!contentDiv) continue;
+					const contentDiv = block.querySelector('.content-container');
+					if (!contentDiv) continue;
 
-						// 添加分隔线（如果不存在）
+					if (!translatedDiv) {
 						if (!contentDiv.querySelector('.translation-divider')) {
 							contentDiv.createEl("div", { cls: "translation-divider" });
 						}
-
 						translatedDiv = contentDiv.createEl('div', { cls: 'translated-text' });
-					} else {
-						translatedDiv.className = 'translated-text'; // 重置类名（移除可能的error类）
 					}
-					translatedDiv.textContent = translatedText;
+
+					// 使用流式输出
+					await apiService.translate(
+						originalText,
+						this.plugin.settings.targetLang,
+						(partialText: string) => {
+							if (translatedDiv) {
+								translatedDiv.textContent = partialText;
+							}
+						}
+					);
+
 				} catch (error) {
 					console.error('翻译失败:', error);
-					// 显示错误信息
 					let translatedDiv = block.querySelector('.translated-text');
 					if (!translatedDiv) {
 						const contentDiv = block.querySelector('.content-container');
@@ -1162,6 +1122,55 @@ export class TranscriptView extends ItemView {
 			new Notice("AI翻译完成");
 		} catch (error) {
 			new Notice("AI翻译失败: " + error.message);
+		}
+	}
+
+	private async handleAIOptimize() {
+		// 检查是否选择了 AI 服务
+		if (!this.plugin.settings.selectedAIService) {
+			new Notice("请先在设置中选择 AI 服务");
+			return;
+		}
+
+		const apiService = APIServiceFactory.getService(this.plugin.settings);
+		if (!apiService) {
+			new Notice(`请先在设置中配置 ${this.plugin.settings.selectedAIService === 'kimi' ? 'Kimi' : 'DeepSeek'} API密钥`);
+			return;
+		}
+
+		try {
+			const blocks = this.dataContainerEl?.querySelectorAll('.transcript-block');
+			if (!blocks) return;
+
+			const loadingIndicator = this.contentEl.createEl("div", {
+				cls: "translation-loading",
+				text: "正在使用AI进行优化..."
+			});
+
+			const blockArray = Array.from(blocks);
+
+			for (const block of blockArray) {
+				const originalTextEl = block.querySelector('.original-text');
+				if (!originalTextEl || !originalTextEl.textContent) continue;
+
+				try {
+					// 使用流式输出
+					await apiService.optimize(
+						originalTextEl.textContent,
+						(partialText: string) => {
+							originalTextEl.textContent = partialText;
+						}
+					);
+				} catch (error) {
+					console.error('优化失败:', error);
+					new Notice(`部分内容优化失败: ${error.message}`);
+				}
+			}
+
+			loadingIndicator.remove();
+			new Notice("AI优化完成");
+		} catch (error) {
+			new Notice("AI优化失败: " + error.message);
 		}
 	}
 }

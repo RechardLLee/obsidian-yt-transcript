@@ -1,12 +1,12 @@
 export interface TranslationService {
-    translate(text: string, targetLang: string): Promise<string>;
+    translate(text: string, targetLang: string, onProgress?: (text: string) => void): Promise<string>;
 }
 
 export class GoogleTranslationService implements TranslationService {
     private readonly MAX_RETRIES = 3;
     private readonly RETRY_DELAY = 1000; // 1秒
 
-    async translate(text: string, targetLang: string): Promise<string> {
+    async translate(text: string, targetLang: string, onProgress?: (text: string) => void): Promise<string> {
         let retries = 0;
         
         while (retries < this.MAX_RETRIES) {
@@ -28,6 +28,10 @@ export class GoogleTranslationService implements TranslationService {
                     .filter((item: any[]) => item && item[0])
                     .map((item: any[]) => item[0])
                     .join('');
+                
+                if (onProgress) {
+                    onProgress(translatedText);
+                }
                 
                 return translatedText;
             } catch (error: any) {
