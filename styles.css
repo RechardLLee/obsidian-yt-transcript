@@ -25,67 +25,137 @@ If your plugin does not need CSS, delete this file.
 }
 
 .transcript-block {
-    margin-bottom: 1.5em;
-    padding: 10px;
-    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 2em;
+    padding: 15px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background-color: var(--background-primary);
+    transition: all 0.2s ease;
 }
 
-.transcript-line {
-    margin-bottom: 0.5em;
-    line-height: 1.5;
+.transcript-block:hover {
+    box-shadow: 0 2px 8px var(--background-modifier-box-shadow);
+}
+
+.timestamp-container {
+    margin-bottom: 10px;
+    padding: 4px 8px;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
+    display: inline-block;
 }
 
 .timestamp-link {
-    color: var(--text-faint);
-    font-size: 0.8em;
-    margin-right: 0.5em;
+    color: var(--text-muted);
+    font-size: 0.9em;
     text-decoration: none;
+    display: flex;
+    align-items: center;
 }
 
 .timestamp-link:hover {
+    color: var(--text-normal);
     text-decoration: underline;
 }
 
-.translated-text {
-    color: var(--text-muted);
-    font-size: 0.95em;
-    margin-top: 0.5em;
-    padding: 0.5em;
-    background: var(--background-modifier-form-field);
-    border-radius: 4px;
+.content-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .original-text {
     color: var(--text-normal);
+    line-height: 1.6;
+    font-size: 1em;
 }
 
-.timestamp {
-    color: var(--text-faint);
-    font-size: 0.8em;
-    margin-bottom: 0.3em;
+.translation-divider {
+    height: 1px;
+    background-color: var(--background-modifier-border);
+    margin: 8px 0;
 }
 
-.translation-loading {
+.translated-text {
     color: var(--text-muted);
-    font-style: italic;
-    padding: 10px;
-    text-align: center;
+    line-height: 1.6;
+    font-size: 0.95em;
+    padding: 8px;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
 }
 
 .translation-error {
     color: var(--text-error);
-    font-size: 0.9em;
-    margin-left: 1em;
-    padding: 2px 5px;
     background-color: var(--background-modifier-error);
-    border-radius: 3px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
 }
 
-.transcript-error {
-    color: var(--text-error);
-    padding: 10px;
+/* 添加复制提示 */
+.transcript-block {
+    position: relative;
+}
+
+.transcript-block::after {
+    content: "点击复制";
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 0.8em;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.transcript-block:hover::after {
+    opacity: 1;
+}
+
+/* 复制成功的动画效果 */
+@keyframes copySuccess {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.copy-success {
+    animation: copySuccess 0.3s ease;
+}
+
+.search-container {
+    margin-bottom: 20px;
+    padding: 0 10px;
+}
+
+.search-input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border);
+}
+
+.search-highlight {
+    background-color: var(--text-highlight-bg);
+    color: var(--text-normal);
+    padding: 0 2px;
+    border-radius: 2px;
+    font-weight: bold;
+}
+
+.search-status {
+    padding: 5px 10px;
     margin: 10px 0;
-    background-color: var(--background-modifier-error);
-    border-radius: 5px;
+    border-radius: 4px;
+    font-size: 0.9em;
     text-align: center;
 }

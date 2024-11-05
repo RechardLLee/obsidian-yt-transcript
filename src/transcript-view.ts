@@ -92,18 +92,106 @@ export class TranscriptView extends ItemView {
 		data: TranscriptResponse,
 		timestampMod: number,
 	) {
-		const searchInputEl = this.contentEl.createEl("input");
-		searchInputEl.type = "text";
-		searchInputEl.placeholder = "Search...";
+		const searchContainer = this.contentEl.createEl("div", {
+			cls: "search-container"
+		});
+
+		const searchInputEl = searchContainer.createEl("input", {
+			cls: "search-input",
+			attr: {
+				type: "text",
+				placeholder: "搜索字幕内容...",
+			}
+		});
+		searchInputEl.style.width = "100%";
 		searchInputEl.style.marginBottom = "20px";
+		searchInputEl.style.padding = "8px";
+
+		// 添加防抖
+		let debounceTimeout: NodeJS.Timeout;
 		searchInputEl.addEventListener("input", (e) => {
-			const searchFilter = (e.target as HTMLInputElement).value;
-			this.renderTranscriptionBlocks(
-				url,
-				data,
-				timestampMod,
-				searchFilter,
-			);
+			clearTimeout(debounceTimeout);
+			debounceTimeout = setTimeout(() => {
+				const searchFilter = (e.target as HTMLInputElement).value.toLowerCase();
+				this.handleSearch(searchFilter);
+			}, 300);
+		});
+	}
+
+	private handleSearch(searchValue: string) {
+		const blocks = this.contentEl.querySelectorAll(".transcript-block");
+		let hasResults = false;
+		const searchLower = searchValue.toLowerCase().trim();
+
+		blocks.forEach((block) => {
+			// 获取所有文本内容，包括原文和翻译
+			const originalText = block.querySelector(".original-text")?.textContent?.toLowerCase() || "";
+			const translatedText = block.querySelector(".translated-text")?.textContent?.toLowerCase() || "";
+			const timestampText = block.querySelector(".timestamp")?.textContent?.toLowerCase() || "";
+			const allText = `${originalText} ${translatedText} ${timestampText}`;
+
+			if (searchValue === "" || allText.includes(searchLower)) {
+				(block as HTMLElement).style.display = "block";
+				if (searchValue) {
+					// 分别高亮原文和翻译中的匹配内容
+					const originalEl = block.querySelector(".original-text");
+					const translatedEl = block.querySelector(".translated-text");
+					
+					if (originalEl) {
+						this.highlightText(originalEl as HTMLElement, searchValue);
+					}
+					if (translatedEl) {
+						this.highlightText(translatedEl as HTMLElement, searchValue);
+					}
+				}
+				hasResults = true;
+			} else {
+				(block as HTMLElement).style.display = "none";
+			}
+		});
+
+		// 更新搜索状态显示
+		const existingStatus = this.contentEl.querySelector(".search-status");
+		if (existingStatus) {
+				existingStatus.remove();
+		}
+
+		if (searchValue) {
+			const statusEl = this.contentEl.createEl("div", {
+				cls: "search-status",
+				text: hasResults ? 
+					`找到包含 "${searchValue}" 的内容` : 
+					`未找到包含 "${searchValue}" 的内容`
+			});
+			this.contentEl.insertBefore(statusEl, this.contentEl.firstChild);
+			statusEl.style.color = hasResults ? "var(--text-muted)" : "var(--text-error)";
+		}
+	}
+
+	private highlightText(element: HTMLElement, searchText: string) {
+		if (!searchText) return;
+		
+		// 保存原始内容
+		const originalContent = element.textContent || "";
+		// 创建临时容器
+		const tempDiv = document.createElement('div');
+		
+		// 使用正则表达式进行不区分大小写的全局匹配
+		const regex = new RegExp(`(${searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+		const highlightedContent = originalContent.replace(regex, '<span class="search-highlight">$1</span>');
+		
+		// 设置高亮后的内容
+		tempDiv.innerHTML = highlightedContent;
+		
+		// 清空原始元素并添加高亮后的内容
+		element.innerHTML = tempDiv.innerHTML;
+	}
+
+	private removeHighlights(element: HTMLElement) {
+		const highlights = element.querySelectorAll('.search-highlight');
+		highlights.forEach(highlight => {
+			const text = highlight.textContent || '';
+			highlight.replaceWith(text);
 		});
 	}
 
@@ -150,24 +238,32 @@ export class TranscriptView extends ItemView {
 		
 		dataContainerEl.empty();
 
-		// 使用新的段落合并逻辑
-		const paragraphs = this.combineIntoParagraphs(data.lines.map(line => ({
-			text: line.text,
-			timestamp: line.offset
-		})), url);
+		try {
+			// 使用 await 等待段落合并完成
+			const paragraphs = await this.combineIntoParagraphs(data.lines.map(line => ({
+				text: line.text,
+				timestamp: line.offset
+			})), url);
 
-		// 获取翻译
-		let translations: { original: string, translated: string }[] = [];
-		if (this.plugin.settings.enableTranslation) {
-			translations = await this.getTranslations(paragraphs);
-		}
+			// 获取翻译
+			let translations: { original: string, translated: string }[] = [];
+			if (this.plugin.settings.enableTranslation) {
+				translations = await this.getTranslations(paragraphs);
+			}
 
-		// 渲染内容
-		this.renderParagraphs(paragraphs, translations, url, dataContainerEl);
+			// 渲染内容
+			this.renderParagraphs(paragraphs, translations, url, dataContainerEl);
 
-		// 处理搜索高亮
-		if (searchValue) {
-			this.handleSearchHighlight(dataContainerEl, searchValue);
+			// 处理搜索高亮
+			if (searchValue) {
+				this.handleSearchHighlight(dataContainerEl, searchValue);
+			}
+		} catch (error) {
+			console.error("Error in renderTranscriptionBlocks:", error);
+			const errorDiv = dataContainerEl.createEl("div", {
+				cls: "transcript-error",
+				text: `处理失败: ${error?.message || '未知错误'}`
+			});
 		}
 	}
 
@@ -178,7 +274,34 @@ export class TranscriptView extends ItemView {
 		});
 
 		try {
-			if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
+			if (this.plugin.settings.useDeepseek && this.plugin.settings.deepseekApiKey) {
+				const { DeepseekTranslationService } = await import("./deepseek-translation-service");
+				const deepseekTranslator = new DeepseekTranslationService(
+					this.plugin.settings.deepseekApiKey,
+					this.plugin.settings.deepseekApiUrl
+				);
+
+				return await Promise.all(
+					paragraphs.map(async para => {
+						try {
+							const originalText = para.text.join(' ');
+							const translation = await deepseekTranslator.translate(
+								originalText,
+								this.plugin.settings.targetLang
+							);
+							
+							return {
+								original: originalText,
+								translated: translation
+							};
+						} catch (error) {
+							console.error("DeepSeek translation failed:", error);
+							// 如果 DeepSeek 翻译失败，回退到其他翻译服务
+							return this.fallbackTranslation(para);
+						}
+					})
+				);
+			} else if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
 				const { TextOptimizer } = await import("./text-optimizer");
 				const { KimiTranslationService } = await import("./kimi-translation-service");
 				
@@ -191,28 +314,22 @@ export class TranscriptView extends ItemView {
 					this.plugin.settings.kimiApiUrl
 				);
 
-				const results = await Promise.all(
+				return await Promise.all(
 					paragraphs.map(async para => {
 						try {
-							// 保留原始文本
 							const originalText = para.text.join(' ');
-							
-							// 优化文本用于翻译，但不显示优化后的文本
 							const optimizedForTranslation = await textOptimizer.optimizeText(originalText);
-							
-							// 使用优化后的文本进行翻译
 							const translation = await kimiTranslator.translate(
 								optimizedForTranslation,
 								this.plugin.settings.targetLang
 							);
 							
 							return {
-								original: originalText,  // 返回原始文本
+								original: originalText,
 								translated: translation
 							};
 						} catch (error) {
 							console.error("AI processing failed:", error);
-							// 如果 AI 处理失败，回退到 Google 翻译
 							const translation = await this.translationService.translate(
 								para.text.join(' '),
 								this.plugin.settings.targetLang
@@ -224,9 +341,7 @@ export class TranscriptView extends ItemView {
 						}
 					})
 				);
-				return results;
 			} else {
-				// 使用原有的 Google 翻译
 				return await Promise.all(
 					paragraphs.map(async para => {
 						const originalText = para.text.join(' ');
@@ -246,7 +361,79 @@ export class TranscriptView extends ItemView {
 		}
 	}
 
-	private combineIntoParagraphs(transcript: TranscriptItem[], url: string): ParagraphItem[] {
+	private async fallbackTranslation(para: ParagraphItem): Promise<{ original: string, translated: string }> {
+		const originalText = para.text.join(' ');
+		try {
+			if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
+				const { KimiTranslationService } = await import("./kimi-translation-service");
+				const kimiTranslator = new KimiTranslationService(
+					this.plugin.settings.kimiApiKey,
+					this.plugin.settings.kimiApiUrl
+				);
+				const translation = await kimiTranslator.translate(
+					originalText,
+					this.plugin.settings.targetLang
+				);
+				return { original: originalText, translated: translation };
+			} else {
+				const translation = await this.translationService.translate(
+					originalText,
+					this.plugin.settings.targetLang
+				);
+				return { original: originalText, translated: translation };
+			}
+		} catch (error) {
+			console.error("Fallback translation failed:", error);
+			return {
+				original: originalText,
+				translated: "翻译失败: 所有翻译服务都无法使用"
+			};
+		}
+	}
+
+	private async combineIntoParagraphs(transcript: TranscriptItem[], url: string): Promise<ParagraphItem[]> {
+		// 句子结束的标志
+		const completeEndRegex = /[.!?。！？]\s*$/;
+		// 不完整句子的标志
+		const incompleteEndRegex = /\b(and|or|but|because|if|for|to|the|a|an|in|on|at|by|with|I'm|I|you're|he's|she's|it's|we're|they're)\s*$/i;
+		// 新主题开始的标志词
+		const newTopicRegex = /^(Now|However|But|Therefore|Moreover|Furthermore|In addition|First|Second|Third|Finally|Also|Besides|Meanwhile|Later|Then)\b/i;
+		// 移除多余空格的函数
+		const normalizeSpaces = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+		// 如果启用了 AI 优化且有可用的 API
+		if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
+			try {
+				const { TextOptimizer } = await import("./text-optimizer");
+				const textOptimizer = new TextOptimizer(
+					this.plugin.settings.kimiApiKey,
+					this.plugin.settings.kimiApiUrl
+				);
+
+				// 先将所有文本合并并优化
+				const fullText = transcript.map(item => item.text).join(' ');
+				const optimizedText = await textOptimizer.optimizeText(fullText);
+
+				// 将优化后的文本分割成句子
+				const sentences = optimizedText.split(/(?<=[.!?。！？])\s+/);
+				
+				return this.createParagraphsFromSentences(sentences, transcript, url);
+			} catch (error) {
+				console.error("AI optimization failed:", error);
+				// 如果 AI 优化失败，回退到普通的段落划分
+				return this.createParagraphsDirectly(transcript, url);
+			}
+		} else {
+			// 不使用 AI 时直接进行段落划分
+			return this.createParagraphsDirectly(transcript, url);
+		}
+	}
+
+	private createParagraphsFromSentences(
+		sentences: string[], 
+		transcript: TranscriptItem[], 
+		url: string
+	): ParagraphItem[] {
 		const paragraphs: ParagraphItem[] = [];
 		let currentParagraph: {
 			texts: string[];
@@ -257,95 +444,112 @@ export class TranscriptView extends ItemView {
 			timestamps: [],
 			firstTimestamp: 0
 		};
-		
-		// 完整句子结束的标志（句号，问号，感叹号后面跟空格或结束）
-		const sentenceEndRegex = /[.!?。！？]\s*$/;
-		// 不完整句子的标志（以介词、连词、冠词等结尾）
-		const incompleteEndRegex = /\b(and|or|but|in|on|at|the|a|an|to|for|with|by|as|of)\s*$/i;
-		// 移除多余空格的函数
-		const normalizeSpaces = (text: string) => text.replace(/\s+/g, ' ').trim();
-		
-		transcript.forEach((item, index) => {
-			// 规范化当前文本的空格
-			const normalizedText = normalizeSpaces(item.text);
-			
-			// 检查是否应该与前一句合并
-			const shouldCombineWithPrevious = 
-				currentParagraph.texts.length > 0 && (
-					// 如果前一句以不完整标志结尾
-					incompleteEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]) ||
-					// 或当前句以小写字母开头（可能是前一句的继续）
-					/^[a-z]/.test(normalizedText) ||
-					// 或当前句以连接词开头
-					/^(and|or|but|so|because|as|if|unless|while|when)\b/i.test(normalizedText)
-				);
 
-			if (shouldCombineWithPrevious) {
-				// 合并到前一句
-				const lastIndex = currentParagraph.texts.length - 1;
-				currentParagraph.texts[lastIndex] = normalizeSpaces(
-					currentParagraph.texts[lastIndex] + ' ' + normalizedText
-				);
-			} else {
-				// 添加为新句子
-				currentParagraph.texts.push(normalizedText);
+		let sentenceCount = 0;
+		const MIN_SENTENCES = this.plugin.settings.minSentences;
+		const MAX_SENTENCES = this.plugin.settings.maxSentences;
+
+		sentences.forEach((sentence, index) => {
+			// 获取当前句子对应的时间戳
+			const timestamp = transcript[index]?.timestamp || 0;
+
+			currentParagraph.texts.push(sentence);
+			if (timestamp) {
+				if (currentParagraph.timestamps.length === 0) {
+					currentParagraph.firstTimestamp = timestamp;
+				}
+				currentParagraph.timestamps.push(timestamp);
 			}
+			sentenceCount++;
 
-			// 记录时间戳
+			// 判断是否应该结束当前段落
+			const shouldEndParagraph = 
+				(sentenceCount >= MIN_SENTENCES && sentence.match(/[.!?。！？]$/)) ||
+				sentenceCount >= MAX_SENTENCES ||
+				index === sentences.length - 1;
+
+			if (shouldEndParagraph) {
+				paragraphs.push({
+					text: [currentParagraph.texts.join(' ')],
+					timestamp: currentParagraph.firstTimestamp,
+					endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
+					timeLinks: currentParagraph.timestamps.map(ts => 
+						`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
+				});
+
+				currentParagraph = {
+					texts: [],
+					timestamps: [],
+					firstTimestamp: 0
+				};
+				sentenceCount = 0;
+			}
+		});
+
+		return paragraphs;
+	}
+
+	private createParagraphsDirectly(transcript: TranscriptItem[], url: string): ParagraphItem[] {
+		const paragraphs: ParagraphItem[] = [];
+		let currentParagraph: {
+			texts: string[];
+			timestamps: number[];
+			firstTimestamp: number;
+		} = {
+			texts: [],
+			timestamps: [],
+			firstTimestamp: 0
+		};
+
+		let sentenceCount = 0;
+		const MIN_SENTENCES = this.plugin.settings.minSentences;
+		const MAX_SENTENCES = this.plugin.settings.maxSentences;
+		const sentenceEndRegex = /[.!?。！？]\s*$/;
+		const incompleteEndRegex = /\b(and|or|but|because|if|for|to|the|a|an|in|on|at|by|with|I'm|I|you're|he's|she's|it's|we're|they're)\s*$/i;
+
+		transcript.forEach((item, index) => {
+			const text = item.text.trim();
+			
+			// 检查是否是完整句子
+			const isCompleteSentence = sentenceEndRegex.test(text);
+			const isIncomplete = incompleteEndRegex.test(text);
+
+			currentParagraph.texts.push(text);
 			if (item.timestamp) {
 				if (currentParagraph.timestamps.length === 0) {
 					currentParagraph.firstTimestamp = item.timestamp;
 				}
 				currentParagraph.timestamps.push(item.timestamp);
 			}
-			
+
+			if (isCompleteSentence && !isIncomplete) {
+				sentenceCount++;
+			}
+
 			// 判断是否应该结束当前段落
 			const shouldEndParagraph = 
-				// 当前段落已经有完整的句子且达到一定长度
-				(sentenceEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]) && 
-				 currentParagraph.texts.length >= 2) ||
-				// 或者段落已经很长了
-				currentParagraph.texts.length >= 6 ||
-				// 或者是最后一句
+				(sentenceCount >= MIN_SENTENCES && isCompleteSentence) ||
+				sentenceCount >= MAX_SENTENCES ||
 				index === transcript.length - 1;
-			
-			// 但如果最后一句是不完整的，就不要结束段落
-			const isLastSentenceIncomplete = 
-				incompleteEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]);
-			
-			if (shouldEndParagraph && !isLastSentenceIncomplete && currentParagraph.texts.length > 0) {
-				// 合并段落中的所有文本，确保空格正确
-				const combinedText = currentParagraph.texts.join(' ');
-				
+
+			if (shouldEndParagraph && !isIncomplete) {
 				paragraphs.push({
-					text: [normalizeSpaces(combinedText)], // 存储为单个合并后的文本
+					text: [currentParagraph.texts.join(' ')],
 					timestamp: currentParagraph.firstTimestamp,
 					endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
 					timeLinks: currentParagraph.timestamps.map(ts => 
 						`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
 				});
-				
-				// 重置当前段落
+
 				currentParagraph = {
 					texts: [],
 					timestamps: [],
 					firstTimestamp: 0
 				};
+				sentenceCount = 0;
 			}
 		});
-		
-		// 处理最后一个段落（如果有的话）
-		if (currentParagraph.texts.length > 0) {
-			const combinedText = currentParagraph.texts.join(' ');
-			paragraphs.push({
-				text: [normalizeSpaces(combinedText)],
-				timestamp: currentParagraph.firstTimestamp,
-				endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
-				timeLinks: currentParagraph.timestamps.map(ts => 
-					`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
-			});
-		}
-		
+
 		return paragraphs;
 	}
 
@@ -360,26 +564,50 @@ export class TranscriptView extends ItemView {
 				cls: "transcript-block"
 			});
 			
-			// 时间戳范围
-			blockDiv.createEl("div", {
-				cls: "timestamp",
+			// 创建时间戳容器
+			const timeDiv = blockDiv.createEl("div", {
+				cls: "timestamp-container"
+			});
+			
+			// 添加时间戳和链接
+			const timeLink = timeDiv.createEl("a", {
+				cls: "timestamp-link",
+				href: `${url}&t=${Math.floor(para.timestamp/1000)}`,
 				text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
 			});
 			
-			// 显示原始文本
-			const originalDiv = blockDiv.createEl("div", {
-				cls: "original-text",
+			timeLink.setAttr("target", "_blank");
+			
+			// 创建内容容器
+			const contentDiv = blockDiv.createEl("div", {
+				cls: "content-container"
+			});
+			
+			// 原文
+			const originalDiv = contentDiv.createEl("div", {
+				cls: "original-text"
+			});
+			
+			originalDiv.createSpan({
 				text: translations[index].original
 			});
 			
-			// 中文译文
+			// 分隔线
+			contentDiv.createEl("div", {
+				cls: "translation-divider"
+			});
+			
+			// 译文
 			if (translations[index].translated) {
-				blockDiv.createEl("div", {
-					cls: translations[index].translated.includes('翻译失败') ? 'translation-error' : 'translated-text',
+				const translatedDiv = contentDiv.createEl("div", {
+					cls: translations[index].translated.includes('翻译失败') ? 'translation-error' : 'translated-text'
+				});
+				
+				translatedDiv.createSpan({
 					text: translations[index].translated
 				});
 			}
-
+			
 			// 添加交互功能
 			this.addInteractiveFeatures(blockDiv, url, para);
 		});
@@ -479,13 +707,8 @@ export class TranscriptView extends ItemView {
 					text: "Please check if video contains any transcript or try adjust language and country in plugin settings.",
 				});
 			} else {
-				const transcriptItems: TranscriptItem[] = data.lines.map(line => ({
-					text: line.text,
-					timestamp: line.offset
-				}));
-				await this.renderTranscript(transcriptItems, url);
-				
-				this.renderTranscriptionBlocks(url, data, timestampMod, "");
+				// 移除重复的渲染调用，只保留一个
+				await this.renderTranscriptionBlocks(url, data, timestampMod, "");
 			}
 		} catch (err: unknown) {
 			let errorMessage = "";
@@ -521,87 +744,5 @@ export class TranscriptView extends ItemView {
 	}
 	getIcon(): string {
 		return "scroll";
-	}
-
-	async renderTranscript(transcript: TranscriptItem[], url: string) {
-		try {
-			const container = this.contentEl.createEl("div");
-			
-			// 使用新的段落合并逻辑
-			const paragraphs = this.combineIntoParagraphs(transcript, url);
-			
-			if (this.plugin.settings.enableTranslation) {
-				const loadingIndicator = container.createEl("div", {
-					cls: "translation-loading",
-					text: "正在加载翻译..."
-				});
-				
-				// 获取翻译
-				const translations = await Promise.all(
-					paragraphs.map(async para => {
-						try {
-							// 将段落中的所有句子合并成一个完整的段落
-							const fullText = para.text.join(' ');
-							return await this.translationService.translate(
-								fullText,
-								this.plugin.settings.targetLang
-							);
-						} catch (error) {
-							console.error("Translation failed for text:", para.text, error);
-							return `翻译失败: ${error?.message || '未知错误'}`;
-						}
-					})
-				);
-				
-				loadingIndicator.remove();
-				
-				// 渲染段落
-				paragraphs.forEach((para, index) => {
-					const blockDiv = container.createEl("div", {
-						cls: "transcript-block"
-					});
-					
-					// 添加时间戳范围
-					blockDiv.createEl("div", {
-						cls: "timestamp",
-						text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
-					});
-					
-					// 原文
-					const originalDiv = blockDiv.createEl("div", {
-						cls: "original-text",
-						text: para.text.join(' ')
-					});
-					
-					// 译文
-					blockDiv.createEl("div", {
-						cls: translations[index].includes('翻译失败') ? 'translation-error' : 'translated-text',
-						text: translations[index]
-					});
-				});
-			} else {
-				// 未启用翻译时的显示逻辑...
-				paragraphs.forEach(para => {
-					const blockDiv = container.createEl("div", {
-						cls: "transcript-block"
-					});
-					
-					blockDiv.createEl("div", {
-						cls: "timestamp",
-						text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
-					});
-					
-					blockDiv.createEl("div", {
-						cls: "original-text",
-						text: para.text.join(' ')
-					});
-				});
-			}
-		} catch (error: any) {
-			const errorDiv = this.contentEl.createEl("div", {
-				cls: "transcript-error",
-				text: `加载失败: ${error?.message || '未知错误'}`
-			});
-		}
 	}
 }
