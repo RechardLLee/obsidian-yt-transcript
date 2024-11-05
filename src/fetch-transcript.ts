@@ -131,14 +131,38 @@ export class TranscriptFetcher {
 	}
 
 	private static optimizeSubtitles(subtitles: TranscriptLine[]): TranscriptLine[] {
-		const mergedSubtitles = this.mergeShortSubtitles(subtitles);
-		
-		const cleanedSubtitles = mergedSubtitles.map(line => ({
-			...line,
-			text: this.cleanText(line.text)
-		}));
+		// 1. 过滤并排序字幕
+		const validSubtitles = subtitles
+			.filter(line => line.text && line.text.trim() !== '' && line.duration > 0 && line.offset >= 0)
+			.sort((a, b) => a.offset - b.offset);
 
-		return cleanedSubtitles.sort((a, b) => a.offset - b.offset);
+		// 2. 每三句合并成一段
+		const SENTENCES_PER_BLOCK = 3;
+		const paragraphs: TranscriptLine[] = [];
+		let currentTexts: string[] = [];
+		let startOffset = 0;
+		let endOffset = 0;
+
+		validSubtitles.forEach((line, index) => {
+			if (currentTexts.length === 0) {
+				startOffset = line.offset;
+			}
+
+			currentTexts.push(line.text);
+			endOffset = line.offset + line.duration;
+
+			// 当收集够三句话或是最后一句时，创建新段落
+			if (currentTexts.length === SENTENCES_PER_BLOCK || index === validSubtitles.length - 1) {
+				paragraphs.push({
+					text: currentTexts.join(' '),
+					offset: startOffset,
+					duration: endOffset - startOffset
+				});
+				currentTexts = [];
+			}
+		});
+
+		return paragraphs;
 	}
 
 	private static cleanText(text: string): string {

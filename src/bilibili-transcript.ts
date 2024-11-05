@@ -1,3 +1,5 @@
+import * as path from 'path';
+
 export class BilibiliTranscriptError extends Error {
     constructor(err: unknown) {
         if (!(err instanceof Error)) {
@@ -46,7 +48,6 @@ export class BilibiliTranscript {
             return this.scriptPath;  // 使用用户设置的路径
         }
 
-        const path = require('path');
         const fs = require('fs');
 
         // 使用 Obsidian API 获取插件目录路径
@@ -336,7 +337,7 @@ export class BilibiliTranscript {
                 index === 0 || line.text !== self[index - 1].text
             );
 
-        // 5. 确保字幕时长合理
+        // 5. 确保字幕时长合��
         return sortedSubtitles.map((line, index, array) => {
             // 如果不是最后一条字幕，使用下一条字幕的开始时间来计算持续时间
             if (index < array.length - 1) {
@@ -489,35 +490,5 @@ export class BilibiliTranscript {
         }
 
         return finalSegments.join('\n');
-    }
-
-    private static async formatChineseText(text: string): Promise<string> {
-        const { spawn } = require('child_process');
-        const scriptPath = path.join(__dirname, '..', 'scripts', 'text_formatter.py');
-        
-        return new Promise((resolve, reject) => {
-            const process = spawn('python', [scriptPath]);
-            let output = '';
-            let error = '';
-            
-            process.stdin.write(text);
-            process.stdin.end();
-            
-            process.stdout.on('data', (data: Buffer) => {
-                output += data.toString();
-            });
-            
-            process.stderr.on('data', (data: Buffer) => {
-                error += data.toString();
-            });
-            
-            process.on('close', (code: number) => {
-                if (code === 0) {
-                    resolve(output.trim());
-                } else {
-                    reject(new Error(`格式化失败: ${error}`));
-                }
-            });
-        });
     }
 } 
