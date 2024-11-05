@@ -1,4 +1,3 @@
-import YTranscriptPlugin from "./main";
 import { ItemView, WorkspaceLeaf, Menu } from "obsidian";
 import {
 	TranscriptResponse,
@@ -7,8 +6,13 @@ import {
 } from "./fetch-transcript";
 import { formatTimestamp } from "./timestampt-utils";
 import { getTranscriptBlocks, highlightText } from "./render-utils";
-import { TranscriptBlock } from "./types";
 import { TranslationService, GoogleTranslationService } from "./translation-service";
+import type YTranscriptPlugin from "./main";
+
+interface TranscriptBlock {
+	quote: string;
+	quoteTimeOffset: number;
+}
 
 export interface TranscriptLine {
 	text: string;
@@ -153,7 +157,7 @@ export class TranscriptView extends ItemView {
 		})), url);
 
 		// 获取翻译
-		let translations: string[] = [];
+		let translations: { original: string, translated: string }[] = [];
 		if (this.plugin.settings.enableTranslation) {
 			translations = await this.getTranslations(paragraphs);
 		}
@@ -167,28 +171,76 @@ export class TranscriptView extends ItemView {
 		}
 	}
 
-	private async getTranslations(paragraphs: ParagraphItem[]): Promise<string[]> {
+	private async getTranslations(paragraphs: ParagraphItem[]): Promise<{ original: string, translated: string }[]> {
 		const loadingIndicator = this.contentEl.createEl("div", {
 			cls: "translation-loading",
-			text: "正在加载翻译..."
+			text: "正在优化和翻译文本..."
 		});
 
 		try {
-			const translations = await Promise.all(
-				paragraphs.map(async para => {
-					try {
-						const fullText = para.text.join(' ');
-						return await this.translationService.translate(
-							fullText,
+			if (this.plugin.settings.useAITranslation && this.plugin.settings.kimiApiKey) {
+				const { TextOptimizer } = await import("./text-optimizer");
+				const { KimiTranslationService } = await import("./kimi-translation-service");
+				
+				const textOptimizer = new TextOptimizer(
+					this.plugin.settings.kimiApiKey,
+					this.plugin.settings.kimiApiUrl
+				);
+				const kimiTranslator = new KimiTranslationService(
+					this.plugin.settings.kimiApiKey,
+					this.plugin.settings.kimiApiUrl
+				);
+
+				const results = await Promise.all(
+					paragraphs.map(async para => {
+						try {
+							// 保留原始文本
+							const originalText = para.text.join(' ');
+							
+							// 优化文本用于翻译，但不显示优化后的文本
+							const optimizedForTranslation = await textOptimizer.optimizeText(originalText);
+							
+							// 使用优化后的文本进行翻译
+							const translation = await kimiTranslator.translate(
+								optimizedForTranslation,
+								this.plugin.settings.targetLang
+							);
+							
+							return {
+								original: originalText,  // 返回原始文本
+								translated: translation
+							};
+						} catch (error) {
+							console.error("AI processing failed:", error);
+							// 如果 AI 处理失败，回退到 Google 翻译
+							const translation = await this.translationService.translate(
+								para.text.join(' '),
+								this.plugin.settings.targetLang
+							);
+							return {
+								original: para.text.join(' '),
+								translated: translation
+							};
+						}
+					})
+				);
+				return results;
+			} else {
+				// 使用原有的 Google 翻译
+				return await Promise.all(
+					paragraphs.map(async para => {
+						const originalText = para.text.join(' ');
+						const translation = await this.translationService.translate(
+							originalText,
 							this.plugin.settings.targetLang
 						);
-					} catch (error) {
-						console.error("Translation failed for text:", para.text, error);
-						return `翻译失败: ${error?.message || '未知错误'}`;
-					}
-				})
-			);
-			return translations;
+						return {
+							original: originalText,
+							translated: translation
+						};
+					})
+				);
+			}
 		} finally {
 			loadingIndicator.remove();
 		}
@@ -206,10 +258,40 @@ export class TranscriptView extends ItemView {
 			firstTimestamp: 0
 		};
 		
+		// 完整句子结束的标志（句号，问号，感叹号后面跟空格或结束）
 		const sentenceEndRegex = /[.!?。！？]\s*$/;
+		// 不完整句子的标志（以介词、连词、冠词等结尾）
+		const incompleteEndRegex = /\b(and|or|but|in|on|at|the|a|an|to|for|with|by|as|of)\s*$/i;
+		// 移除多余空格的函数
+		const normalizeSpaces = (text: string) => text.replace(/\s+/g, ' ').trim();
 		
 		transcript.forEach((item, index) => {
-			currentParagraph.texts.push(item.text);
+			// 规范化当前文本的空格
+			const normalizedText = normalizeSpaces(item.text);
+			
+			// 检查是否应该与前一句合并
+			const shouldCombineWithPrevious = 
+				currentParagraph.texts.length > 0 && (
+					// 如果前一句以不完整标志结尾
+					incompleteEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]) ||
+					// 或当前句以小写字母开头（可能是前一句的继续）
+					/^[a-z]/.test(normalizedText) ||
+					// 或当前句以连接词开头
+					/^(and|or|but|so|because|as|if|unless|while|when)\b/i.test(normalizedText)
+				);
+
+			if (shouldCombineWithPrevious) {
+				// 合并到前一句
+				const lastIndex = currentParagraph.texts.length - 1;
+				currentParagraph.texts[lastIndex] = normalizeSpaces(
+					currentParagraph.texts[lastIndex] + ' ' + normalizedText
+				);
+			} else {
+				// 添加为新句子
+				currentParagraph.texts.push(normalizedText);
+			}
+
+			// 记录时间戳
 			if (item.timestamp) {
 				if (currentParagraph.timestamps.length === 0) {
 					currentParagraph.firstTimestamp = item.timestamp;
@@ -217,20 +299,33 @@ export class TranscriptView extends ItemView {
 				currentParagraph.timestamps.push(item.timestamp);
 			}
 			
+			// 判断是否应该结束当前段落
 			const shouldEndParagraph = 
-				(sentenceEndRegex.test(item.text) && currentParagraph.texts.length >= 3) ||
-				currentParagraph.texts.length >= 5 ||
+				// 当前段落已经有完整的句子且达到一定长度
+				(sentenceEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]) && 
+				 currentParagraph.texts.length >= 2) ||
+				// 或者段落已经很长了
+				currentParagraph.texts.length >= 6 ||
+				// 或者是最后一句
 				index === transcript.length - 1;
 			
-			if (shouldEndParagraph && currentParagraph.texts.length > 0) {
+			// 但如果最后一句是不完整的，就不要结束段落
+			const isLastSentenceIncomplete = 
+				incompleteEndRegex.test(currentParagraph.texts[currentParagraph.texts.length - 1]);
+			
+			if (shouldEndParagraph && !isLastSentenceIncomplete && currentParagraph.texts.length > 0) {
+				// 合并段落中的所有文本，确保空格正确
+				const combinedText = currentParagraph.texts.join(' ');
+				
 				paragraphs.push({
-					text: currentParagraph.texts,
+					text: [normalizeSpaces(combinedText)], // 存储为单个合并后的文本
 					timestamp: currentParagraph.firstTimestamp,
 					endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
 					timeLinks: currentParagraph.timestamps.map(ts => 
 						`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
 				});
 				
+				// 重置当前段落
 				currentParagraph = {
 					texts: [],
 					timestamps: [],
@@ -239,12 +334,24 @@ export class TranscriptView extends ItemView {
 			}
 		});
 		
+		// 处理最后一个段落（如果有的话）
+		if (currentParagraph.texts.length > 0) {
+			const combinedText = currentParagraph.texts.join(' ');
+			paragraphs.push({
+				text: [normalizeSpaces(combinedText)],
+				timestamp: currentParagraph.firstTimestamp,
+				endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
+				timeLinks: currentParagraph.timestamps.map(ts => 
+					`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
+			});
+		}
+		
 		return paragraphs;
 	}
 
 	private renderParagraphs(
 		paragraphs: ParagraphItem[], 
-		translations: string[], 
+		translations: { original: string, translated: string }[], 
 		url: string,
 		container: HTMLElement
 	) {
@@ -259,17 +366,17 @@ export class TranscriptView extends ItemView {
 				text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
 			});
 			
-			// 原文
+			// 显示原始文本
 			const originalDiv = blockDiv.createEl("div", {
 				cls: "original-text",
-				text: para.text.join(' ')
+				text: translations[index].original
 			});
 			
-			// 译文
-			if (translations[index]) {
+			// 中文译文
+			if (translations[index].translated) {
 				blockDiv.createEl("div", {
-					cls: translations[index].includes('翻译失败') ? 'translation-error' : 'translated-text',
-					text: translations[index]
+					cls: translations[index].translated.includes('翻译失败') ? 'translation-error' : 'translated-text',
+					text: translations[index].translated
 				});
 			}
 
