@@ -305,7 +305,7 @@ export class TranscriptView extends ItemView {
 		});
 
 		try {
-			// 如果没有启用翻译，直接返回原文
+			// 如果没有启用翻译，直接返回文
 			if (!this.plugin.settings.enableTranslation) {
 				return paragraphs.map(para => ({
 					original: para.text.join(' '),
@@ -471,60 +471,53 @@ export class TranscriptView extends ItemView {
 		const paragraphs: ParagraphItem[] = [];
 		let currentParagraph: {
 			texts: string[];
-			timestamps: number[];
-			firstTimestamp: number;
+			startTime: number;
+			endTime: number;
 		} = {
 			texts: [],
-			timestamps: [],
-			firstTimestamp: 0
+			startTime: 0,
+			endTime: 0
 		};
 
-		let sentenceCount = 0;
-		const MIN_SENTENCES = this.plugin.settings.minSentences;
-		const MAX_SENTENCES = this.plugin.settings.maxSentences;
+		// 句子结束的标点符号
 		const sentenceEndRegex = /[.!?。！？]\s*$/;
-		const incompleteEndRegex = /\b(and|or|but|because|if|for|to|the|a|an|in|on|at|by|with|I'm|I|you're|he's|she's|it's|we're|they're)\s*$/i;
+		// 段落结束的标志（比如说话人的改变、主题的改变等）
+		const paragraphEndRegex = /^(But |However |Now |So |And |In |On |At |The |This |That |These |Those |I |We |You |He |She |It |They )/i;
 
 		transcript.forEach((item, index) => {
 			const text = item.text.trim();
-			
-			// 检查是否是完整句子
-			const isCompleteSentence = sentenceEndRegex.test(text);
-			const isIncomplete = incompleteEndRegex.test(text);
+			const timestamp = item.timestamp || 0;
 
+			// 如果是第一个条目，初始化开始时间
+			if (currentParagraph.texts.length === 0) {
+				currentParagraph.startTime = timestamp;
+			}
+
+			// 添加当前文本到当前段落
 			currentParagraph.texts.push(text);
-			if (item.timestamp) {
-				if (currentParagraph.timestamps.length === 0) {
-					currentParagraph.firstTimestamp = item.timestamp;
-				}
-				currentParagraph.timestamps.push(item.timestamp);
-			}
-
-			if (isCompleteSentence && !isIncomplete) {
-				sentenceCount++;
-			}
+			currentParagraph.endTime = timestamp;
 
 			// 判断是否应该结束当前段落
-			const shouldEndParagraph = 
-				(sentenceCount >= MIN_SENTENCES && isCompleteSentence) ||
-				sentenceCount >= MAX_SENTENCES ||
-				index === transcript.length - 1;
+			const isLastItem = index === transcript.length - 1;
+			const endsWithPunctuation = sentenceEndRegex.test(text);
+			const nextItemStartsNewParagraph = !isLastItem && 
+				paragraphEndRegex.test(transcript[index + 1].text);
 
-			if (shouldEndParagraph && !isIncomplete) {
+			if (isLastItem || (endsWithPunctuation && nextItemStartsNewParagraph)) {
+				// 结束当前段落
 				paragraphs.push({
-					text: [currentParagraph.texts.join(' ')],
-					timestamp: currentParagraph.firstTimestamp,
-					endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
-					timeLinks: currentParagraph.timestamps.map(ts => 
-						`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
+					text: currentParagraph.texts,
+					timestamp: currentParagraph.startTime,
+					endTimestamp: currentParagraph.endTime,
+					timeLinks: [`[${formatTimestamp(currentParagraph.startTime)}-${formatTimestamp(currentParagraph.endTime)}](${url}&t=${Math.floor(currentParagraph.startTime/1000)})`]
 				});
 
+				// 重置当前段落
 				currentParagraph = {
 					texts: [],
-					timestamps: [],
-					firstTimestamp: 0
+					startTime: 0,
+					endTime: 0
 				};
-				sentenceCount = 0;
 			}
 		});
 
@@ -542,6 +535,7 @@ export class TranscriptView extends ItemView {
 		const targetLang = this.plugin.settings.targetLang;
 		const skipTranslation = targetLang.toLowerCase().includes('zh') && isChineseContent;
 
+		
 		paragraphs.forEach((para, index) => {
 			const blockDiv = container.createEl("div", {
 				cls: "transcript-block"
@@ -551,15 +545,14 @@ export class TranscriptView extends ItemView {
 			const timeDiv = blockDiv.createEl("div", {
 				cls: "timestamp-container"
 			});
-			
-			// 添加时间戳和链接
-			const timeLink = timeDiv.createEl("a", {
+
+			// 显示时间段
+			const timeRange = timeDiv.createEl("a", {
 				cls: "timestamp-link",
 				href: `${url}&t=${Math.floor(para.timestamp/1000)}`,
-				text: `${formatTimestamp(para.timestamp)}${para.endTimestamp ? ` - ${formatTimestamp(para.endTimestamp)}` : ''}`
+				text: `[${formatTimestamp(para.timestamp)}-${formatTimestamp(para.endTimestamp || para.timestamp)}]`
 			});
-			
-			timeLink.setAttr("target", "_blank");
+			timeRange.setAttr("target", "_blank");
 			
 			// 创建内容容器
 			const contentDiv = blockDiv.createEl("div", {
@@ -571,7 +564,8 @@ export class TranscriptView extends ItemView {
 				cls: "original-text"
 			});
 			
-			const formattedOriginalText = translations[index].original.replace(/\n+/g, ' ').trim();
+			// 合并段落中的所有文本
+			const formattedOriginalText = para.text.join(' ').replace(/\n+/g, ' ').trim();
 			originalDiv.createSpan({
 				text: formattedOriginalText
 			});
@@ -850,7 +844,7 @@ export class TranscriptView extends ItemView {
 		});
 		aiOptimizeButton.style.marginRight = "10px";
 
-		// 添加AI翻译按��
+		// 添加AI翻译按
 		const aiTranslateButton = buttonContainer.createEl("button", {
 			cls: "save-button",
 			text: "AI翻译"

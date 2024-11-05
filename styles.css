@@ -232,3 +232,31 @@ If your plugin does not need CSS, delete this file.
 .save-button:active {
     transform: translateY(1px);
 }
+
+.timestamp-selector {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.9em;
+    cursor: pointer;
+    width: auto;
+    min-width: 120px;
+}
+
+.timestamp-selector:hover {
+    border-color: var(--interactive-accent);
+}
+
+.timestamp-selector:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-hover);
+}
+
+.timestamp-selector option {
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    padding: 4px 8px;
+}
