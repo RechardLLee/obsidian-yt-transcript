@@ -1,8 +1,8 @@
 import { ItemView, WorkspaceLeaf, Menu, Notice } from "obsidian";
 import {
 	TranscriptResponse,
-	YoutubeTranscript,
-	YoutubeTranscriptError,
+	TranscriptFetcher,
+	TranscriptError
 } from "./fetch-transcript";
 import { formatTimestamp } from "./timestampt-utils";
 import { getTranscriptBlocks, highlightText } from "./render-utils";
@@ -705,7 +705,9 @@ export class TranscriptView extends ItemView {
 
 			this.renderLoader();
 
-			const data = await YoutubeTranscript.fetchTranscript(url, {
+			let data;
+			// 使用 TranscriptFetcher 来获取字幕
+			data = await TranscriptFetcher.fetchTranscript(url, {
 				lang,
 				country,
 			});
@@ -713,8 +715,8 @@ export class TranscriptView extends ItemView {
 			if (!data) throw Error();
 
 			// 保存数据到类属性中
-			this.videoData = [data];  // 将 data 包装在数组中
-			this.videoTitle = data.title;  // 保存视频标题
+			this.videoData = [data];
+			this.videoTitle = data.title;
 
 			this.isDataLoaded = true;
 			this.loaderContainerEl.empty();
@@ -747,8 +749,12 @@ export class TranscriptView extends ItemView {
 			}
 		} catch (err: unknown) {
 			let errorMessage = "";
-			if (err instanceof YoutubeTranscriptError) {
+			if (err instanceof TranscriptError) {
 				errorMessage = err.message;
+			} else if (err instanceof Error) {
+				errorMessage = err.message;
+			} else {
+				errorMessage = "Unknown error occurred";
 			}
 
 			this.loaderContainerEl?.empty();
@@ -800,7 +806,7 @@ export class TranscriptView extends ItemView {
 			cls: "url-input",
 			attr: {
 				type: "text",
-				placeholder: "输入 YouTube 视频链接...",
+				placeholder: "输入 YouTube 或 Bilibili 视频链接...",
 				value: currentUrl
 			}
 		});
@@ -1000,7 +1006,7 @@ export class TranscriptView extends ItemView {
 
 ## 视频信息
 - 标题：${metadata.title}
-- 链接：${metadata.url}
+- ![](${metadata.url})
 - 保存时间：${new Date(metadata.timestamp).toLocaleString()}
 
 ## 字幕内容\n\n`;
@@ -1031,7 +1037,7 @@ export class TranscriptView extends ItemView {
 				.replace(/\s+/g, ' ')
 				.trim();
 			
-			// 添加时间戳和英文
+			// 添加时间戳和英文（保持原有格式）
 			bilingualTranscript += `[${timestamp}](${timestampHref})\n\n${formattedOriginalText}\n\n`;
 			
 			// 如果有有效的中文翻译，添加中文

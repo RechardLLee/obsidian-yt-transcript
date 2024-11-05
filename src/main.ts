@@ -28,6 +28,8 @@ interface YTranscriptSettings {
 	deepseekApiKey: string;
 	deepseekApiUrl: string;
 	useDeepseek: boolean;
+	bilibiliCookie: string;
+	bilibiliScriptPath: string;
 }
 
 const DEFAULT_SETTINGS: YTranscriptSettings = {
@@ -46,43 +48,53 @@ const DEFAULT_SETTINGS: YTranscriptSettings = {
 	deepseekApiKey: '',
 	deepseekApiUrl: 'https://api.deepseek.com/v1/chat/completions',
 	useDeepseek: false,
+	bilibiliCookie: '',
+	bilibiliScriptPath: '',
 };
 
 export default class YTranscriptPlugin extends Plugin {
 	settings: YTranscriptSettings;
 
 	async onload() {
-			await this.loadSettings();
+		await this.loadSettings();
 
-			this.registerView(
-				TRANSCRIPT_TYPE_VIEW,
-				(leaf) => new TranscriptView(leaf, this),
-			);
+		this.registerView(
+			TRANSCRIPT_TYPE_VIEW,
+			(leaf) => new TranscriptView(leaf, this),
+		);
 
-			this.addCommand({
-				id: "transcript-from-text",
-				name: "Get YouTube transcript from selected url",
-				editorCallback: (editor: Editor, _: MarkdownView) => {
-					const url = EditorExtensions.getSelectedText(editor).trim();
+		this.addCommand({
+			id: "transcript-from-text",
+			name: "Get YouTube/Bilibili transcript from selected url",
+			editorCallback: (editor: Editor, _: MarkdownView) => {
+				const url = EditorExtensions.getSelectedText(editor).trim();
+				this.openView(url);
+			},
+		});
+
+		this.addCommand({
+			id: "transcript-from-prompt",
+			name: "Get YouTube/Bilibili transcript from url prompt",
+			callback: async () => {
+				const prompt = new PromptModal();
+				const url: string = await new Promise((resolve) =>
+					prompt.openAndGetValue(resolve, () => {}),
+				);
+				if (url) {
 					this.openView(url);
-				},
-			});
+				}
+			},
+		});
 
-			this.addCommand({
-				id: "transcript-from-prompt",
-				name: "Get YouTube transcript from url prompt",
-				callback: async () => {
-					const prompt = new PromptModal();
-					const url: string = await new Promise((resolve) =>
-						prompt.openAndGetValue(resolve, () => {}),
-					);
-					if (url) {
-						this.openView(url);
-					}
-				},
-			});
+		this.addSettingTab(new YTranslateSettingTab(this.app, this));
 
-			this.addSettingTab(new YTranslateSettingTab(this.app, this));
+		// 添加提示
+		new Notice('请确保已运行 Python 服务器：\npython bilibili_subtitle.py --server');
+
+		// 设置 BilibiliTranscript 的配置
+		const { BilibiliTranscript } = await import("./bilibili-transcript");
+		BilibiliTranscript.setCookie(this.settings.bilibiliCookie);
+		BilibiliTranscript.setScriptPath(this.settings.bilibiliScriptPath);
 	}
 
 	async openView(url: string) {
@@ -349,7 +361,7 @@ class YTranslateSettingTab extends PluginSettingTab {
 		// 添加重置按钮
 		new Setting(containerEl)
 			.setName("重置段落设置")
-			.setDesc("将段落控制设置恢复为默认值")
+			.setDesc("将段落控制设置恢复默认值")
 			.addButton((button) => 
 				button
 					.setButtonText("重置")
@@ -433,6 +445,86 @@ class YTranslateSettingTab extends PluginSettingTab {
 							button.setDisabled(false);
 						}
 					})
+			);
+
+		// 添加B站设置部分
+		containerEl.createEl("h2", { text: "Bilibili 设置" });
+
+		new Setting(containerEl)
+			.setName("Bilibili Cookie")
+			.setDesc("设置B站cookie以获取完整访问权限（可选）")
+			.addText((text) =>
+				text
+					.setPlaceholder("输入您的B站cookie")
+					.setValue(this.plugin.settings.bilibiliCookie)
+					.onChange(async (value) => {
+						this.plugin.settings.bilibiliCookie = value;
+						// 更新BilibiliTranscript的cookie
+						const { BilibiliTranscript } = await import("./bilibili-transcript");
+						BilibiliTranscript.setCookie(value);
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Python 脚本路径")
+			.setDesc("设置 bilibili_subtitle.py 脚本的路径（可选，留空使用默认路径）")
+			.addText((text) =>
+				text
+					.setPlaceholder("输入脚本完整路径")
+					.setValue(this.plugin.settings.bilibiliScriptPath)
+					.onChange(async (value) => {
+						this.plugin.settings.bilibiliScriptPath = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// 添加B站连接测试
+		new Setting(containerEl)
+			.setName("测试 Bilibili 连接")
+			.setDesc("测试 Cookie 设置和字获取是否正常")
+			.addText(text => text
+				.setPlaceholder("输入BV号进行测试")
+				.setValue("")
+			)
+			.addButton(button => button
+				.setButtonText("测试")
+				.onClick(async (evt) => {
+					const bvid = (evt.target as HTMLElement)
+						.parentElement?.parentElement
+						?.querySelector('input')?.value;
+					
+					if (!bvid) {
+						new Notice("请输入要测试的视频BV号");
+						return;
+					}
+
+					button.setButtonText("测试中...");
+					button.setDisabled(true);
+
+					try {
+						const { BilibiliTranscript } = await import("./bilibili-transcript");
+						const result = await BilibiliTranscript.testConnection(bvid);
+
+						if (result.success) {
+							let message = result.message;
+							if (result.details?.subtitles) {
+								message += "\n\n字幕示例：\n" + 
+									result.details.subtitles
+										.map((s: any) => s.content)
+										.join("\n");
+							}
+							new Notice(message, 5000);
+						} else {
+							new Notice("测试失败: " + result.message);
+						}
+					} catch (error) {
+						new Notice("测试出错: " + error.message);
+					} finally {
+						button.setButtonText("测试");
+						button.setDisabled(false);
+					}
+				})
 			);
 	}
 }
