@@ -40,6 +40,11 @@ export class YoutubeTranscript {
 		config?: TranscriptConfig,
 	) {
 		try {
+			const hasSubtitles = await this.checkSubtitlesExist(url);
+			if (!hasSubtitles) {
+				throw new Error("该视频没有字幕");
+			}
+
 			const langCode = config?.lang ?? "en";
 
 			const videoPageBody = await request(url);
@@ -71,6 +76,10 @@ export class YoutubeTranscript {
 						track.languageCode.includes(langCode),
 					) ?? availableCaptions?.[0];
 
+			if (!captionTrack) {
+				throw new Error(`未找到${langCode}语言的字幕`);
+			}
+
 			const captionsUrl = captionTrack?.baseUrl;
 			const fixedCaptionsUrl = captionsUrl.startsWith("https://")
 				? captionsUrl
@@ -98,6 +107,30 @@ export class YoutubeTranscript {
 			};
 		} catch (err: any) {
 			throw new YoutubeTranscriptError(err);
+		}
+	}
+
+	private static async checkSubtitlesExist(url: string): Promise<boolean> {
+		try {
+			const videoPageBody = await request(url);
+			const parsedBody = parse(videoPageBody);
+			const scripts = parsedBody.getElementsByTagName("script");
+			const playerScript = scripts.find((script) =>
+				script.textContent.includes("var ytInitialPlayerResponse = {"),
+			);
+
+			if (!playerScript) return false;
+
+			const dataString = playerScript.textContent
+				?.split("var ytInitialPlayerResponse = ")?.[1]
+				?.split("};")?.[0] + "}";
+
+			const data = JSON.parse(dataString.trim());
+			const captions = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+			
+			return Array.isArray(captions) && captions.length > 0;
+		} catch (error) {
+			return false;
 		}
 	}
 }

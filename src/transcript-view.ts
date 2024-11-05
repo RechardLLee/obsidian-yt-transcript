@@ -9,15 +9,27 @@ import { getTranscriptBlocks, highlightText } from "./render-utils";
 import { TranslationService, GoogleTranslationService } from "./translation-service";
 import type YTranscriptPlugin from "./main";
 
-interface TranscriptBlock {
-	quote: string;
-	quoteTimeOffset: number;
+interface VideoMetadata {
+	title: string;
+	url: string;
+	timestamp: string;
 }
 
-export interface TranscriptLine {
-	text: string;
-	offset: number;
-	duration: number;
+interface ArchiveData {
+	basic: {
+		link: string;
+		summary: string;
+		srt: string;
+	};
+	advanced: {
+		link: string;
+		summary: string;
+		srt: string;
+	};
+	qa?: {
+		questions: string[];
+		answers: string[];
+	};
 }
 
 export interface TranscriptItem {
@@ -33,6 +45,18 @@ export interface ParagraphItem {
 }
 
 export const TRANSCRIPT_TYPE_VIEW = "transcript-view";
+
+interface TranscriptBlock {
+	quote: string;
+	quoteTimeOffset: number;
+}
+
+interface TranscriptLine {
+	text: string;
+	duration: number;
+	offset: number;
+}
+
 export class TranscriptView extends ItemView {
 	isDataLoaded: boolean;
 	plugin: YTranscriptPlugin;
@@ -124,7 +148,7 @@ export class TranscriptView extends ItemView {
 		const searchLower = searchValue.toLowerCase().trim();
 
 		blocks.forEach((block) => {
-			// 获取所有文本内容，包括原文和翻译
+			// 获取所有文本内容，包括原文翻译
 			const originalText = block.querySelector(".original-text")?.textContent?.toLowerCase() || "";
 			const translatedText = block.querySelector(".translated-text")?.textContent?.toLowerCase() || "";
 			const timestampText = block.querySelector(".timestamp")?.textContent?.toLowerCase() || "";
@@ -394,7 +418,7 @@ export class TranscriptView extends ItemView {
 	private async combineIntoParagraphs(transcript: TranscriptItem[], url: string): Promise<ParagraphItem[]> {
 		// 句子结束的标志
 		const completeEndRegex = /[.!?。！？]\s*$/;
-		// 不完整句子的标志
+		// 不完整句子的标
 		const incompleteEndRegex = /\b(and|or|but|because|if|for|to|the|a|an|in|on|at|by|with|I'm|I|you're|he's|she's|it's|we're|they're)\s*$/i;
 		// 新主题开始的标志词
 		const newTopicRegex = /^(Now|However|But|Therefore|Moreover|Furthermore|In addition|First|Second|Third|Finally|Also|Besides|Meanwhile|Later|Then)\b/i;
@@ -414,7 +438,7 @@ export class TranscriptView extends ItemView {
 				const fullText = transcript.map(item => item.text).join(' ');
 				const optimizedText = await textOptimizer.optimizeText(fullText);
 
-				// 将优化后的文本分割成句子
+				// 将优化后文本分割成句子
 				const sentences = optimizedText.split(/(?<=[.!?。！？])\s+/);
 				
 				return this.createParagraphsFromSentences(sentences, transcript, url);
@@ -462,7 +486,7 @@ export class TranscriptView extends ItemView {
 			}
 			sentenceCount++;
 
-			// 判断否应该结束前段落
+			// 判断否应该结束前落
 			const shouldEndParagraph = 
 				(sentenceCount >= MIN_SENTENCES && sentence.match(/[.!?。！？]$/)) ||
 				sentenceCount >= MAX_SENTENCES ||
@@ -583,13 +607,15 @@ export class TranscriptView extends ItemView {
 				cls: "content-container"
 			});
 			
-			// 原文
+			// 原文 - 作为单个段落显示
 			const originalDiv = contentDiv.createEl("div", {
 				cls: "original-text"
 			});
 			
+			// 将原文中的换行符替换为空格，确保文本在一个段落内显示
+			const formattedOriginalText = translations[index].original.replace(/\n+/g, ' ').trim();
 			originalDiv.createSpan({
-				text: translations[index].original
+				text: formattedOriginalText
 			});
 			
 			// 分隔线
@@ -597,14 +623,16 @@ export class TranscriptView extends ItemView {
 				cls: "translation-divider"
 			});
 			
-			// 译文
+			// 译文 - 同样作为单个段落显示
 			if (translations[index].translated) {
 				const translatedDiv = contentDiv.createEl("div", {
 					cls: translations[index].translated.includes('翻译失败') ? 'translation-error' : 'translated-text'
 				});
 				
+				// 将译文中的换行符替换为空格，确保文本在一个段落内显示
+				const formattedTranslatedText = translations[index].translated.replace(/\n+/g, ' ').trim();
 				translatedDiv.createSpan({
-					text: translations[index].translated
+					text: formattedTranslatedText
 				});
 			}
 			
@@ -637,9 +665,9 @@ export class TranscriptView extends ItemView {
 			const menu = new Menu();
 			menu.addItem((item) =>
 				item.setTitle("Copy all").onClick(() => {
-					const text = para.lines.map((line: TranscriptLine) => 
+					const text = (para as any).lines.map((line: { offset: number; text: string }) => 
 						`[${formatTimestamp(line.offset)}](${url}&t=${Math.floor(line.offset/1000)}) ${line.text}`
-					).join('\n');
+						).join('\n');
 					navigator.clipboard.writeText(text);
 				})
 			);
@@ -684,11 +712,18 @@ export class TranscriptView extends ItemView {
 
 			if (!data) throw Error();
 
+			// 保存数据到类属性中
+			this.videoData = [data];  // 将 data 包装在数组中
+			this.videoTitle = data.title;  // 保存视频标题
+
 			this.isDataLoaded = true;
 			this.loaderContainerEl.empty();
 
 			this.renderVideoTitle(data.title);
 			this.renderSearchInput(url, data, timestampMod);
+			
+			// 添加保存按钮
+			await this.renderSaveButton();
 
 			if (this.dataContainerEl === undefined) {
 				this.dataContainerEl = this.contentEl.createEl("div");
@@ -708,7 +743,6 @@ export class TranscriptView extends ItemView {
 					text: "Please check if video contains any transcript or try adjust language and country in plugin settings.",
 				});
 			} else {
-				// 移除重复的渲染调用，只保留一个
 				await this.renderTranscriptionBlocks(url, data, timestampMod, "");
 			}
 		} catch (err: unknown) {
@@ -838,4 +872,206 @@ export class TranscriptView extends ItemView {
 			}
 		});
 	}
+
+	private async renderSaveButton() {
+		const buttonContainer = this.contentEl.createEl("div", {
+			cls: "save-button-container"
+		});
+
+		const saveButton = buttonContainer.createEl("button", {
+			cls: "save-button",
+			text: "保存为 Markdown"
+		});
+
+		saveButton.addEventListener("click", async () => {
+			await this.saveAsMarkdown();
+		});
+	}
+
+	private async saveAsMarkdown() {
+		try {
+			if (!this.videoData || !this.videoTitle) {
+				new Notice("没有可保存的数据");
+				return;
+			}
+
+			const metadata: VideoMetadata = {
+				title: this.videoTitle,
+				url: this.plugin.settings.leafUrls[this.getLeafIndex()],
+				timestamp: new Date().toISOString()
+			};
+
+			// 创建存档数据
+			const archiveData: ArchiveData = {
+				basic: {
+					link: metadata.url,
+					summary: "",  // 可以后续添加摘要生成功能
+					srt: this.generateSRT()
+				},
+				advanced: {
+					link: metadata.url,
+					summary: "",
+					srt: this.generateSRT(true)  // 生成带时间戳的完整字幕
+				}
+			};
+
+			// 使用视频标题作为文件夹名
+			const folderName = sanitizeFileName(metadata.title);
+			const basePath = folderName;
+			
+			// 创建文件夹
+			await this.app.vault.createFolder(basePath).catch(() => {});
+
+			// 保存 JSON 文件，使用视频标题命名
+			const jsonContent = JSON.stringify({
+				metadata,
+				archive: archiveData
+			}, null, 2);
+			
+			await this.app.vault.create(
+				`${basePath}/${folderName}.json`,
+				jsonContent
+			);
+
+			// 保存 Markdown 笔记，使用视频标题命名
+			const markdownContent = this.generateMarkdownContent(metadata, archiveData);
+			await this.app.vault.create(
+				`${basePath}/${folderName}.md`,
+				markdownContent
+			);
+
+			new Notice("文件保存成功！");
+		} catch (error) {
+			console.error("保存失败:", error);
+			new Notice("保存失败: " + error.message);
+		}
+	}
+
+	private generateSRT(includeTimestamps: boolean = false): string {
+		if (!this.videoData) return "";
+		
+		let srt = "";
+		this.videoData.forEach((data, index) => {
+			data.lines.forEach((line, lineIndex) => {
+				if (includeTimestamps) {
+					srt += `${lineIndex + 1}\n`;
+					srt += `${formatTimestamp(line.offset)} --> ${formatTimestamp(line.offset + line.duration)}\n`;
+				}
+				srt += `${line.text}\n\n`;
+			});
+		});
+		return srt;
+	}
+
+	private generateTranscriptMarkdown(): string {
+		if (!this.videoData) return "";
+		
+		let markdown = "";
+		const blocks = this.contentEl.querySelectorAll(".transcript-block");
+		
+		blocks.forEach(block => {
+			// 获取时间戳
+			const timestampEl = block.querySelector(".timestamp-link");
+			const timestamp = timestampEl?.textContent || "";
+			const timestampHref = timestampEl?.getAttribute("href") || "";
+			
+			// 获原文
+			const originalText = block.querySelector(".original-text")?.textContent?.trim() || "";
+			
+			// 获取翻译（如果存在）
+			const translatedText = block.querySelector(".translated-text")?.textContent?.trim();
+			
+			// 组合 Markdown
+			markdown += `[${timestamp}](${timestampHref})\n\n`;
+			markdown += `${originalText}\n\n`;
+			
+			if (translatedText) {
+				markdown += `译文：${translatedText}\n\n`;
+			}
+			
+			markdown += `---\n\n`; // 添加分隔线
+		});
+		
+		return markdown;
+	}
+
+	private generateMarkdownContent(metadata: VideoMetadata, archiveData: ArchiveData): string {
+		let markdown = `# ${metadata.title}
+
+## 视频信息
+- 标题：${metadata.title}
+- 链接：${metadata.url}
+- 保存时间：${new Date(metadata.timestamp).toLocaleString()}
+
+## 字幕内容\n\n`;
+
+		// 获取所有字幕块
+		const blocks = this.contentEl.querySelectorAll(".transcript-block");
+		
+		// 创建双语字幕部分
+		let bilingualTranscript = "";
+		
+		blocks.forEach(block => {
+			// 获取时间戳
+			const timestampEl = block.querySelector(".timestamp-link");
+			const timestamp = timestampEl?.textContent || "";
+			const timestampHref = timestampEl?.getAttribute("href") || "";
+			
+			// 获取原文（英文）并整理格式
+			const originalText = block.querySelector(".original-text")?.textContent?.trim() || "";
+			const formattedOriginalText = originalText
+				.replace(/\n+/g, ' ')  // 替换所有换行为空格
+				.replace(/\s+/g, ' ')  // 替换多个空格为单个空格
+				.trim();
+			
+			// 获取译文（中文）并整理格式
+			const translatedText = block.querySelector(".translated-text")?.textContent?.trim() || "";
+			const formattedTranslatedText = translatedText
+				.replace(/\n+/g, ' ')
+				.replace(/\s+/g, ' ')
+				.trim();
+			
+			// 添加时间戳和英文
+			bilingualTranscript += `[${timestamp}](${timestampHref})\n\n${formattedOriginalText}\n\n`;
+			
+			// 如果有有效的中文翻译，添加中文
+			if (formattedTranslatedText && !formattedTranslatedText.includes('翻译失败')) {
+				bilingualTranscript += `译文：${formattedTranslatedText}\n\n`;
+			}
+			
+			// 添加分隔线
+			bilingualTranscript += `---\n\n`;
+		});
+
+		markdown += bilingualTranscript;
+		
+		markdown += `
+## 笔记
+<!-- 在此处添加笔记 -->
+
+## 问答
+<!-- 在此处添加问答内容 -->
+`;
+
+		return markdown;
+	}
+}
+
+// 辅助函数：文件名清理（增强版）
+function sanitizeFileName(name: string): string {
+	// 移除或替换不合法的文件名字符
+	const sanitized = name
+		.replace(/[\\/:*?"<>|]/g, '_')  // 替换 Windows 不允许的字符
+		.replace(/\s+/g, '_')           // 替换空格为下划线
+		.replace(/_{2,}/g, '_')         // 将多个连续下划线替换为单个
+		.replace(/^_+|_+$/g, '')        // 移除首尾的下划线
+		.trim();
+	
+	// 如果文件名过长，截取合适长度（保留最后的扩展名）
+	const MAX_LENGTH = 100;  // 设置最大长度
+	if (sanitized.length > MAX_LENGTH) {
+		return sanitized.substring(0, MAX_LENGTH);
+	}
+	
+	return sanitized;
 }

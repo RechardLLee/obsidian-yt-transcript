@@ -10,7 +10,7 @@ export class DeepseekTranslationService implements TranslationService {
     }
 
     async translate(text: string, targetLang: string): Promise<string> {
-        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下英文字幕翻译成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。直接输出翻译结果，不要添加任何前缀说明。
+        const systemPrompt = `你是一位专业的视频字幕翻译专家。请将以下英文字幕翻译成流畅的${targetLang === 'zh-CN' ? '中文' : targetLang}。
 要求：
 1. 保持原文的意思和语气
 2. 使用自然、地道的表达
@@ -19,7 +19,9 @@ export class DeepseekTranslationService implements TranslationService {
 5. 适当调整语序，使译文更符合中文表达习惯
 6. 对于文化相关的内容，进行恰当的本地化处理
 7. 确保译文通顺易读，符合中文语言习惯
-8. 不要添加任何前缀或说明文字`;
+8. 直接输出翻译结果，不要添加任何前缀说明
+9. 对口语化的表达进行适当的书面语转换
+10. 保持段落的整体连贯性`;
 
         try {
             const response = await fetch(this.API_URL, {
