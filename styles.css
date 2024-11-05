@@ -23,3 +23,69 @@ If your plugin does not need CSS, delete this file.
 	border-radius: 2px;
 	font-weight: bold;
 }
+
+.transcript-block {
+    margin-bottom: 1.5em;
+    padding: 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.transcript-line {
+    margin-bottom: 0.5em;
+    line-height: 1.5;
+}
+
+.timestamp-link {
+    color: var(--text-faint);
+    font-size: 0.8em;
+    margin-right: 0.5em;
+    text-decoration: none;
+}
+
+.timestamp-link:hover {
+    text-decoration: underline;
+}
+
+.translated-text {
+    color: var(--text-muted);
+    font-size: 0.95em;
+    margin-top: 0.5em;
+    padding: 0.5em;
+    background: var(--background-modifier-form-field);
+    border-radius: 4px;
+}
+
+.original-text {
+    color: var(--text-normal);
+}
+
+.timestamp {
+    color: var(--text-faint);
+    font-size: 0.8em;
+    margin-bottom: 0.3em;
+}
+
+.translation-loading {
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 10px;
+    text-align: center;
+}
+
+.translation-error {
+    color: var(--text-error);
+    font-size: 0.9em;
+    margin-left: 1em;
+    padding: 2px 5px;
+    background-color: var(--background-modifier-error);
+    border-radius: 3px;
+}
+
+.transcript-error {
+    color: var(--text-error);
+    padding: 10px;
+    margin: 10px 0;
+    background-color: var(--background-modifier-error);
+    border-radius: 5px;
+    text-align: center;
+}

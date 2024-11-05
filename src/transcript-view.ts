@@ -1,4 +1,4 @@
-import YTranscriptPlugin from "src/main";
+import YTranscriptPlugin from "./main";
 import { ItemView, WorkspaceLeaf, Menu } from "obsidian";
 import {
 	TranscriptResponse,
@@ -8,6 +8,25 @@ import {
 import { formatTimestamp } from "./timestampt-utils";
 import { getTranscriptBlocks, highlightText } from "./render-utils";
 import { TranscriptBlock } from "./types";
+import { TranslationService, GoogleTranslationService } from "./translation-service";
+
+export interface TranscriptLine {
+	text: string;
+	offset: number;
+	duration: number;
+}
+
+export interface TranscriptItem {
+	text: string;
+	timestamp?: number;
+}
+
+export interface ParagraphItem {
+	text: string[];
+	timestamp: number;
+	endTimestamp?: number;
+	timeLinks: string[];
+}
 
 export const TRANSCRIPT_TYPE_VIEW = "transcript-view";
 export class TranscriptView extends ItemView {
@@ -21,10 +40,13 @@ export class TranscriptView extends ItemView {
 	videoTitle?: string;
 	videoData?: TranscriptResponse[] = [];
 
+	private translationService: TranslationService;
+
 	constructor(leaf: WorkspaceLeaf, plugin: YTranscriptPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 		this.isDataLoaded = false;
+		this.translationService = new GoogleTranslationService();
 	}
 
 	async onOpen() {
@@ -113,104 +135,184 @@ export class TranscriptView extends ItemView {
 	 * @param timestampMod - the number of seconds between each timestamp
 	 * @param searchValue - the value to search for in the transcript
 	 */
-	private renderTranscriptionBlocks(
+	private async renderTranscriptionBlocks(
 		url: string,
 		data: TranscriptResponse,
 		timestampMod: number,
 		searchValue: string,
 	) {
 		const dataContainerEl = this.dataContainerEl;
-		if (dataContainerEl !== undefined) {
-			//Clear old data before rerendering
-			dataContainerEl.empty();
+		if (!dataContainerEl) return;
+		
+		dataContainerEl.empty();
 
-			// TODO implement drag and drop
-			// const handleDrag = (quote: string) => {
-			// 	return (event: DragEvent) => {
-			// 		event.dataTransfer?.setData("text/plain", quote);
-			// 	};
-			// };
+		// 使用新的段落合并逻辑
+		const paragraphs = this.combineIntoParagraphs(data.lines.map(line => ({
+			text: line.text,
+			timestamp: line.offset
+		})), url);
 
-			const transcriptBlocks = getTranscriptBlocks(
-				data.lines,
-				timestampMod,
-			);
-
-			//Filter transcript blocks based on
-			const filteredBlocks = transcriptBlocks.filter((block) =>
-				block.quote.toLowerCase().includes(searchValue.toLowerCase()),
-			);
-
-			filteredBlocks.forEach((block) => {
-				const { quote, quoteTimeOffset } = block;
-				const blockContainerEl = createEl("div", {
-					cls: "yt-transcript__transcript-block",
-				});
-				blockContainerEl.draggable = true;
-
-				const linkEl = createEl("a", {
-					text: formatTimestamp(quoteTimeOffset),
-					attr: {
-						href: url + "&t=" + Math.floor(quoteTimeOffset / 1000),
-					},
-				});
-				linkEl.style.marginBottom = "5px";
-
-				const span = dataContainerEl.createEl("span", {
-					text: quote,
-					title: "Click to copy",
-				});
-
-				span.addEventListener("click", (event) => {
-					const target = event.target as HTMLElement;
-					if (target !== null) {
-						navigator.clipboard.writeText(target.textContent ?? "");
-					}
-				});
-
-				//Highlight any match search terms
-				if (searchValue !== "") highlightText(span, searchValue);
-
-				// TODO implement drag and drop
-				// span.setAttr("draggable", "true");
-				// span.addEventListener("dragstart", handleDrag(quote));
-
-				blockContainerEl.appendChild(linkEl);
-				blockContainerEl.appendChild(span);
-				blockContainerEl.addEventListener(
-					"dragstart",
-					(event: DragEvent) => {
-						event.dataTransfer?.setData(
-							"text/html",
-							blockContainerEl.innerHTML,
-						);
-					},
-				);
-
-				blockContainerEl.addEventListener(
-					"contextmenu",
-					(event: MouseEvent) => {
-						const menu = new Menu();
-						menu.addItem((item) =>
-							item.setTitle("Copy all").onClick(() => {
-								navigator.clipboard.writeText(
-									this.formatContentToPaste(
-										url,
-										filteredBlocks,
-									),
-								);
-							}),
-						);
-						menu.showAtPosition({
-							x: event.clientX,
-							y: event.clientY,
-						});
-					},
-				);
-
-				dataContainerEl.appendChild(blockContainerEl);
-			});
+		// 获取翻译
+		let translations: string[] = [];
+		if (this.plugin.settings.enableTranslation) {
+			translations = await this.getTranslations(paragraphs);
 		}
+
+		// 渲染内容
+		this.renderParagraphs(paragraphs, translations, url, dataContainerEl);
+
+		// 处理搜索高亮
+		if (searchValue) {
+			this.handleSearchHighlight(dataContainerEl, searchValue);
+		}
+	}
+
+	private async getTranslations(paragraphs: ParagraphItem[]): Promise<string[]> {
+		const loadingIndicator = this.contentEl.createEl("div", {
+			cls: "translation-loading",
+			text: "正在加载翻译..."
+		});
+
+		try {
+			const translations = await Promise.all(
+				paragraphs.map(async para => {
+					try {
+						const fullText = para.text.join(' ');
+						return await this.translationService.translate(
+							fullText,
+							this.plugin.settings.targetLang
+						);
+					} catch (error) {
+						console.error("Translation failed for text:", para.text, error);
+						return `翻译失败: ${error?.message || '未知错误'}`;
+					}
+				})
+			);
+			return translations;
+		} finally {
+			loadingIndicator.remove();
+		}
+	}
+
+	private combineIntoParagraphs(transcript: TranscriptItem[], url: string): ParagraphItem[] {
+		const paragraphs: ParagraphItem[] = [];
+		let currentParagraph: {
+			texts: string[];
+			timestamps: number[];
+			firstTimestamp: number;
+		} = {
+			texts: [],
+			timestamps: [],
+			firstTimestamp: 0
+		};
+		
+		const sentenceEndRegex = /[.!?。！？]\s*$/;
+		
+		transcript.forEach((item, index) => {
+			currentParagraph.texts.push(item.text);
+			if (item.timestamp) {
+				if (currentParagraph.timestamps.length === 0) {
+					currentParagraph.firstTimestamp = item.timestamp;
+				}
+				currentParagraph.timestamps.push(item.timestamp);
+			}
+			
+			const shouldEndParagraph = 
+				(sentenceEndRegex.test(item.text) && currentParagraph.texts.length >= 3) ||
+				currentParagraph.texts.length >= 5 ||
+				index === transcript.length - 1;
+			
+			if (shouldEndParagraph && currentParagraph.texts.length > 0) {
+				paragraphs.push({
+					text: currentParagraph.texts,
+					timestamp: currentParagraph.firstTimestamp,
+					endTimestamp: currentParagraph.timestamps[currentParagraph.timestamps.length - 1],
+					timeLinks: currentParagraph.timestamps.map(ts => 
+						`[${formatTimestamp(ts)}](${url}&t=${Math.floor(ts/1000)})`)
+				});
+				
+				currentParagraph = {
+					texts: [],
+					timestamps: [],
+					firstTimestamp: 0
+				};
+			}
+		});
+		
+		return paragraphs;
+	}
+
+	private renderParagraphs(
+		paragraphs: ParagraphItem[], 
+		translations: string[], 
+		url: string,
+		container: HTMLElement
+	) {
+		paragraphs.forEach((para, index) => {
+			const blockDiv = container.createEl("div", {
+				cls: "transcript-block"
+			});
+			
+			// 时间戳范围
+			blockDiv.createEl("div", {
+				cls: "timestamp",
+				text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
+			});
+			
+			// 原文
+			const originalDiv = blockDiv.createEl("div", {
+				cls: "original-text",
+				text: para.text.join(' ')
+			});
+			
+			// 译文
+			if (translations[index]) {
+				blockDiv.createEl("div", {
+					cls: translations[index].includes('翻译失败') ? 'translation-error' : 'translated-text',
+					text: translations[index]
+				});
+			}
+
+			// 添加交互功能
+			this.addInteractiveFeatures(blockDiv, url, para);
+		});
+	}
+
+	private handleSearchHighlight(container: HTMLElement, searchValue: string) {
+		const elements = container.querySelectorAll(".transcript-line");
+		elements.forEach(el => {
+			if (el.textContent?.toLowerCase().includes(searchValue.toLowerCase())) {
+				highlightText(el as HTMLElement, searchValue);
+			}
+		});
+	}
+
+	private addInteractiveFeatures(blockDiv: HTMLElement, url: string, para: any) {
+		blockDiv.draggable = true;
+		
+		blockDiv.addEventListener("click", () => {
+			navigator.clipboard.writeText(blockDiv.textContent || "");
+		});
+
+		blockDiv.addEventListener("dragstart", (event: DragEvent) => {
+			event.dataTransfer?.setData("text/html", blockDiv.innerHTML);
+		});
+
+		blockDiv.addEventListener("contextmenu", (event: MouseEvent) => {
+			const menu = new Menu();
+			menu.addItem((item) =>
+				item.setTitle("Copy all").onClick(() => {
+					const text = para.lines.map((line: TranscriptLine) => 
+						`[${formatTimestamp(line.offset)}](${url}&t=${Math.floor(line.offset/1000)}) ${line.text}`
+					).join('\n');
+					navigator.clipboard.writeText(text);
+				})
+			);
+			menu.showAtPosition({
+				x: event.clientX,
+				y: event.clientY
+			});
+		});
 	}
 
 	/**
@@ -218,13 +320,10 @@ export class TranscriptView extends ItemView {
 	 * This is called when the view is loaded
 	 */
 	async setEphemeralState(state: { url: string }): Promise<void> {
-		//If we switch to another view and then switch back, we don't want to reload the data
 		if (this.isDataLoaded) return;
 
 		const leafIndex = this.getLeafIndex();
 
-		//The state.url is not null when we call setEphermeralState from the command
-		//in this case, we will save the url to the settings for future look up
 		if (state.url) {
 			this.plugin.settings.leafUrls[leafIndex] = state.url;
 			await this.plugin.saveSettings();
@@ -234,18 +333,14 @@ export class TranscriptView extends ItemView {
 		const url = leafUrls[leafIndex];
 
 		try {
-			//If it's the first time loading the view, initialize our containers
-			//otherwise, clear the existing data for rerender
 			if (this.loaderContainerEl === undefined) {
 				this.loaderContainerEl = this.contentEl.createEl("div");
 			} else {
 				this.loaderContainerEl.empty();
 			}
 
-			//Clear all containers for rerender and render loader
 			this.renderLoader();
 
-			//Get the youtube video title and transcript at the same time
 			const data = await YoutubeTranscript.fetchTranscript(url, {
 				lang,
 				country,
@@ -265,7 +360,6 @@ export class TranscriptView extends ItemView {
 				this.dataContainerEl.empty();
 			}
 
-			//If there was already an error clear it
 			if (this.errorContainerEl !== undefined) {
 				this.errorContainerEl.empty();
 			}
@@ -278,6 +372,12 @@ export class TranscriptView extends ItemView {
 					text: "Please check if video contains any transcript or try adjust language and country in plugin settings.",
 				});
 			} else {
+				const transcriptItems: TranscriptItem[] = data.lines.map(line => ({
+					text: line.text,
+					timestamp: line.offset
+				}));
+				await this.renderTranscript(transcriptItems, url);
+				
 				this.renderTranscriptionBlocks(url, data, timestampMod, "");
 			}
 		} catch (err: unknown) {
@@ -314,5 +414,87 @@ export class TranscriptView extends ItemView {
 	}
 	getIcon(): string {
 		return "scroll";
+	}
+
+	async renderTranscript(transcript: TranscriptItem[], url: string) {
+		try {
+			const container = this.contentEl.createEl("div");
+			
+			// 使用新的段落合并逻辑
+			const paragraphs = this.combineIntoParagraphs(transcript, url);
+			
+			if (this.plugin.settings.enableTranslation) {
+				const loadingIndicator = container.createEl("div", {
+					cls: "translation-loading",
+					text: "正在加载翻译..."
+				});
+				
+				// 获取翻译
+				const translations = await Promise.all(
+					paragraphs.map(async para => {
+						try {
+							// 将段落中的所有句子合并成一个完整的段落
+							const fullText = para.text.join(' ');
+							return await this.translationService.translate(
+								fullText,
+								this.plugin.settings.targetLang
+							);
+						} catch (error) {
+							console.error("Translation failed for text:", para.text, error);
+							return `翻译失败: ${error?.message || '未知错误'}`;
+						}
+					})
+				);
+				
+				loadingIndicator.remove();
+				
+				// 渲染段落
+				paragraphs.forEach((para, index) => {
+					const blockDiv = container.createEl("div", {
+						cls: "transcript-block"
+					});
+					
+					// 添加时间戳范围
+					blockDiv.createEl("div", {
+						cls: "timestamp",
+						text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
+					});
+					
+					// 原文
+					const originalDiv = blockDiv.createEl("div", {
+						cls: "original-text",
+						text: para.text.join(' ')
+					});
+					
+					// 译文
+					blockDiv.createEl("div", {
+						cls: translations[index].includes('翻译失败') ? 'translation-error' : 'translated-text',
+						text: translations[index]
+					});
+				});
+			} else {
+				// 未启用翻译时的显示逻辑...
+				paragraphs.forEach(para => {
+					const blockDiv = container.createEl("div", {
+						cls: "transcript-block"
+					});
+					
+					blockDiv.createEl("div", {
+						cls: "timestamp",
+						text: `${formatTimestamp(para.timestamp)} - ${formatTimestamp(para.endTimestamp || para.timestamp)}`
+					});
+					
+					blockDiv.createEl("div", {
+						cls: "original-text",
+						text: para.text.join(' ')
+					});
+				});
+			}
+		} catch (error: any) {
+			const errorDiv = this.contentEl.createEl("div", {
+				cls: "transcript-error",
+				text: `加载失败: ${error?.message || '未知错误'}`
+			});
+		}
 	}
 }

@@ -15,6 +15,8 @@ interface YTranscriptSettings {
 	lang: string;
 	country: string;
 	leafUrls: string[];
+	enableTranslation: boolean;
+	targetLang: string;
 }
 
 const DEFAULT_SETTINGS: YTranscriptSettings = {
@@ -22,43 +24,45 @@ const DEFAULT_SETTINGS: YTranscriptSettings = {
 	lang: "en",
 	country: "EN",
 	leafUrls: [],
+	enableTranslation: false,
+	targetLang: "zh-CN",
 };
 
 export default class YTranscriptPlugin extends Plugin {
 	settings: YTranscriptSettings;
 
 	async onload() {
-		await this.loadSettings();
+			await this.loadSettings();
 
-		this.registerView(
-			TRANSCRIPT_TYPE_VIEW,
-			(leaf) => new TranscriptView(leaf, this),
-		);
+			this.registerView(
+				TRANSCRIPT_TYPE_VIEW,
+				(leaf) => new TranscriptView(leaf, this),
+			);
 
-		this.addCommand({
-			id: "transcript-from-text",
-			name: "Get YouTube transcript from selected url",
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				const url = EditorExtensions.getSelectedText(editor).trim();
-				this.openView(url);
-			},
-		});
-
-		this.addCommand({
-			id: "transcript-from-prompt",
-			name: "Get YouTube transcript from url prompt",
-			callback: async () => {
-				const prompt = new PromptModal();
-				const url: string = await new Promise((resolve) =>
-					prompt.openAndGetValue(resolve, () => {}),
-				);
-				if (url) {
+			this.addCommand({
+				id: "transcript-from-text",
+				name: "Get YouTube transcript from selected url",
+				editorCallback: (editor: Editor, _: MarkdownView) => {
+					const url = EditorExtensions.getSelectedText(editor).trim();
 					this.openView(url);
-				}
-			},
-		});
+				},
+			});
 
-		this.addSettingTab(new YTranslateSettingTab(this.app, this));
+			this.addCommand({
+				id: "transcript-from-prompt",
+				name: "Get YouTube transcript from url prompt",
+				callback: async () => {
+					const prompt = new PromptModal();
+					const url: string = await new Promise((resolve) =>
+						prompt.openAndGetValue(resolve, () => {}),
+					);
+					if (url) {
+						this.openView(url);
+					}
+				},
+			});
+
+			this.addSettingTab(new YTranslateSettingTab(this.app, this));
 	}
 
 	async openView(url: string) {
@@ -142,6 +146,30 @@ class YTranslateSettingTab extends PluginSettingTab {
 						this.plugin.settings.country = value;
 						await this.plugin.saveSettings();
 					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Enable Translation")
+			.setDesc("Enable dual language translation")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableTranslation)
+					.onChange(async (value) => {
+						this.plugin.settings.enableTranslation = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Target Language")
+			.setDesc("Translation target language (e.g. zh-CN, ja, ko)")
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.targetLang)
+					.onChange(async (value) => {
+						this.plugin.settings.targetLang = value;
+						await this.plugin.saveSettings();
+					})
 			);
 	}
 }
