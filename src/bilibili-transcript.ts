@@ -96,8 +96,8 @@ export class BilibiliTranscript {
         config?: BilibiliTranscriptConfig
     ): Promise<BilibiliTranscriptResponse> {
         try {
-            const bvid = this.extractBvid(url);
-            if (!bvid) {
+            const bvidWithP = this.extractBvid(url);
+            if (!bvidWithP) {
                 throw new Error("无法识别的 Bilibili 视频链接");
             }
 
@@ -105,7 +105,10 @@ export class BilibiliTranscript {
             const scriptPath = this.getScriptPath();
             const nodeProcess = require('process');
             
-            const pythonProcess = spawn('python', [scriptPath, bvid, '--cookie', this.cookie || ''], {
+            // 将 bvidWithP 分割成参数数组
+            const pythonArgs = [scriptPath, ...bvidWithP.split(' '), '--cookie', this.cookie || ''];
+            
+            const pythonProcess = spawn('python', pythonArgs, {
                 env: {
                     ...nodeProcess.env,
                     PYTHONIOENCODING: 'utf-8',
@@ -241,8 +244,16 @@ export class BilibiliTranscript {
     }
 
     private static extractBvid(url: string): string | null {
+        // 提取 BV 号和分P参数
         const bvidMatch = url.match(/BV[a-zA-Z0-9]+/);
-        return bvidMatch ? bvidMatch[0] : null;
+        const pMatch = url.match(/[?&]p=(\d+)/);
+        
+        if (!bvidMatch) return null;
+        
+        const bvid = bvidMatch[0];
+        const p = pMatch ? `--p ${pMatch[1]}` : '';  // 如果有分P参数就添加
+        
+        return p ? `${bvid} ${p}` : bvid;
     }
 
     public static async testConnection(bvid: string): Promise<{
@@ -259,8 +270,12 @@ export class BilibiliTranscript {
 
             const { spawn } = require('child_process');
             
+            // 处理可能包含分P参数的 bvid
+            const args = bvid.split(' ');
+            const pythonArgs = [scriptPath, ...args, '--cookie', this.cookie || ''];
+            
             // 使用 spawn 时确保路径正确
-            const process = spawn('python', [scriptPath, bvid, '--cookie', this.cookie || '']);
+            const process = spawn('python', pythonArgs);
             
             return new Promise((resolve, reject) => {
                 let output = '';
@@ -337,7 +352,7 @@ export class BilibiliTranscript {
                 index === 0 || line.text !== self[index - 1].text
             );
 
-        // 5. 确保字幕时长合��
+        // 5. 确保字幕时长合
         return sortedSubtitles.map((line, index, array) => {
             // 如果不是最后一条字幕，使用下一条字幕的开始时间来计算持续时间
             if (index < array.length - 1) {
