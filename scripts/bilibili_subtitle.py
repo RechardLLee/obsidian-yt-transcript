@@ -15,7 +15,7 @@ def load_cookie_from_file(cookie_file):
         print(f"读取cookie文件失败: {e}")
         return None
 
-def get_subtitle(bvid, cookie):
+def get_subtitle(bvid, cookie, p=1):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Referer': 'https://www.bilibili.com',
@@ -33,16 +33,17 @@ def get_subtitle(bvid, cookie):
 
         title = video_info['data']['title']
         aid = video_info['data']['aid']
-        print(f"标题:{title}")
-
-        # 获��� cid
-        cid_url = f'https://api.bilibili.com/x/web-interface/view?aid={aid}'
-        cid_response = requests.get(cid_url, headers=headers)
-        cid_data = cid_response.json()
-        if cid_data['code'] != 0:
-            return {'success': False, 'message': '获取CID失败'}
         
-        cid = cid_data['data']['cid']
+        # 获取分P信息
+        pages = video_info['data']['pages']
+        if p > len(pages):
+            return {'success': False, 'message': f'分P号超出范围，最大分P号为 {len(pages)}'}
+            
+        # 获取指定分P的cid
+        cid = pages[p-1]['cid']  # 注意：p从1开始，数组从0开始
+        part_title = pages[p-1]['part']  # 获取分P标题
+        
+        print(f"标题: {title} - {part_title} (P{p})")
 
         # 获取字幕列表
         subtitle_url = f'https://api.bilibili.com/x/player/wbi/v2?aid={aid}&cid={cid}'
@@ -121,7 +122,7 @@ def run_server():
 
         try:
             data = request.get_json()
-            print(f"收到请求数��: {data}")
+            print(f"收到请求数据: {data}")
             
             if not data:
                 return jsonify({
@@ -132,16 +133,13 @@ def run_server():
 
             bvid = data.get('bvid')
             cookie = data.get('cookie', '')
+            p = data.get('p', 1)  # 获取分P参数，默认为1
             
-            if not bvid:
-                return jsonify({
-                    'success': False,
-                    'message': '缺少 BV 号',
-                    'data': None
-                })
-            
-            # 从 URL 中提取 BV 号
+            # 从URL中提取p参数
             if 'bilibili.com' in bvid:
+                p_match = re.search(r'[?&]p=(\d+)', bvid)
+                if p_match:
+                    p = int(p_match.group(1))
                 bvid_match = re.search(r'BV[a-zA-Z0-9]+', bvid)
                 if bvid_match:
                     bvid = bvid_match.group(0)
@@ -152,8 +150,8 @@ def run_server():
                         'data': None
                     })
 
-            print(f"处理字幕请求: BV号={bvid}")
-            result = get_subtitle(bvid, cookie)
+            print(f"处理字幕请求: BV号={bvid}, P={p}")
+            result = get_subtitle(bvid, cookie, p)
             
             # 确保响应包含所有必要的字段
             response = jsonify({
@@ -196,6 +194,7 @@ def main():
     parser.add_argument('--cookie', help='B站cookie（可选）', default='')
     parser.add_argument('--cookie-file', help='包含cookie的文件路径', default='cookie.txt')
     parser.add_argument('--output', '-o', help='输出文件路径（可选）')
+    parser.add_argument('--p', type=int, default=1, help='视频分P号（可选，默认为1）')  # 添加分P参数
     
     args = parser.parse_args()
     
@@ -209,7 +208,7 @@ def main():
         cookie = load_cookie_from_file(args.cookie_file)
     
     try:
-        result = get_subtitle(args.bvid, cookie)
+        result = get_subtitle(args.bvid, cookie, args.p)  # 传入分P参数
         
         # 清理结果中的特殊字符
         if isinstance(result, dict):
